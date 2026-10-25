@@ -1,0 +1,4258 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Локальный просмотрщик изображений</title>
+<style>
+  :root{
+    --bg:#0f1114;
+    --panel:#171b21;
+    --panel-2:#1d222b;
+    --line:#262d38;
+    --line-2:#333c4a;
+    --text:#ece9e2;
+    --muted:#98a0ad;
+    --dim:#5d6675;
+    --accent:#ffb454;
+    --accent-strong:#ffc36e;
+    --accent-ink:#221302;
+    --accent-soft:rgba(255,180,84,.12);
+    --accent-line:rgba(255,180,84,.45);
+    --ok:#8fd8c0;
+    --font-display: 'Segoe UI', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+    --font-body: 'Segoe UI', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+    --font-mono: ui-monospace, 'Cascadia Code', 'Consolas', 'Courier New', monospace;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  [hidden]{display:none !important}
+  html,body{height:100%}
+  body{
+    background:var(--bg);color:var(--text);
+    font-family:var(--font-body);font-size:15px;line-height:1.5;
+    display:flex;
+    flex-direction:column;
+    height:100vh;
+    height:100dvh;
+    overflow:hidden;
+  }
+  /* ── фоновые слои ── */
+  body::before{
+    content:'';position:fixed;inset:0;z-index:-3;
+    background:
+      radial-gradient(900px 520px at 12% -10%, rgba(255,180,84,.07), transparent 60%),
+      radial-gradient(820px 620px at 105% 110%, rgba(90,140,190,.08), transparent 60%),
+      var(--bg);
+  }
+  body::after{
+    content:'';position:fixed;inset:0;z-index:-1;pointer-events:none;
+    background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='140' height='140'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix type='saturate' values='0'/></filter><rect width='140' height='140' filter='url(%23n)' opacity='0.05'/></svg>");
+  }
+  .glow{
+    position:fixed;z-index:-2;width:60vmax;height:60vmax;left:-22vmax;top:-32vmax;
+    border-radius:50%;pointer-events:none;
+    background:radial-gradient(circle, rgba(255,180,84,.05), transparent 60%);
+    animation:drift 26s ease-in-out infinite alternate;
+  }
+  @keyframes drift{to{transform:translate(30vmax,16vmax)}}
+
+  ::-webkit-scrollbar{width:10px}
+  ::-webkit-scrollbar-track{background:transparent}
+  ::-webkit-scrollbar-thumb{background:#2a313d;border-radius:5px;border:2px solid var(--bg)}
+  ::selection{background:var(--accent);color:var(--accent-ink)}
+
+  img {
+    image-orientation: from-image;
+  }
+
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  /* ── верхняя панель ── */
+  .topbar{
+    position:relative;
+    z-index:30;
+    flex:none;
+    display:flex;align-items:center;gap:14px;flex-wrap:wrap;
+    padding:12px 20px;
+    background:rgba(15,17,20,.84);backdrop-filter:blur(10px);
+    border-bottom:1px solid var(--line);
+  }
+  main{
+    flex:1;
+    min-height:0;
+    display:flex;
+    flex-direction:column;
+    overflow:hidden;
+  }
+  .brand{display:flex;align-items:center;gap:10px;user-select:none}
+  .brand .mark{
+    width:30px;height:30px;flex:none;
+    border:1.5px solid var(--accent-line);border-radius:7px;
+    background:var(--accent-soft);display:grid;place-items:center;
+  }
+  .brand .mark svg{width:15px;height:15px;stroke:var(--accent);fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+  .brand b{font-family:var(--font-display);font-weight:600;font-size:13px;letter-spacing:.08em}
+  .brand b i{font-style:normal;color:var(--accent)}
+  .spacer{flex:1}
+  .chip{
+    display:flex;align-items:center;gap:8px;
+    font-family:var(--font-mono);font-size:12px;color:var(--muted);
+    border:1px solid var(--line);background:var(--panel);border-radius:8px;
+    padding:6px 12px;max-width:340px;
+  }
+  .chip .dot{width:7px;height:7px;border-radius:50%;background:var(--ok);flex:none}
+  .chip .name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .stats{font-family:var(--font-mono);font-size:12px;color:var(--muted);white-space:nowrap}
+  .stats b{color:var(--accent);font-weight:500}
+
+  .scan-progress{
+    position:absolute;left:0;right:0;bottom:-1px;height:3px;
+    background:rgba(255,180,84,.08);
+    overflow:hidden;
+    opacity:0;
+    transition:opacity .25s ease;
+    pointer-events:none;
+  }
+  .topbar.scanning .scan-progress{opacity:1}
+  .scan-progress .bar{
+    height:100%;
+    width:100%;
+    background:linear-gradient(90deg,transparent,var(--accent),transparent);
+    transform:translateX(-100%);
+    animation:scanbar 1.2s linear infinite;
+  }
+  @keyframes scanbar{to{transform:translateX(100%)}}
+
+  /* ── кнопки ── */
+  .btn{
+    font-family:var(--font-body);font-weight:600;font-size:13px;letter-spacing:.02em;
+    display:inline-flex;align-items:center;gap:8px;cursor:pointer;
+    border-radius:9px;padding:9px 16px;
+    border:1px solid var(--line-2);background:var(--panel-2);color:var(--text);
+    transition:transform .15s ease,border-color .15s ease,background .15s ease,box-shadow .15s ease;
+  }
+  .btn:hover{transform:translateY(-1px);border-color:var(--accent-line);background:#232937}
+  .btn:active{transform:translateY(0)}
+  .btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  .btn:disabled{opacity:.5;cursor:not-allowed;transform:none}
+  .btn-primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+  .btn-primary:hover{background:var(--accent-strong);border-color:var(--accent-strong);box-shadow:0 6px 24px rgba(255,180,84,.25)}
+  .btn-lg{font-size:15px;padding:14px 28px;border-radius:11px}
+  .btn-icon{width:38px;height:38px;padding:0;justify-content:center;font-size:15px;flex:none}
+
+  /* ── экран-заглушка (видоискатель) ── */
+  .placeholder{
+    flex:1;
+    min-height:0;
+    display:grid;
+    place-items:center;
+    padding:48px 22px;
+    overflow-y:auto;
+  }
+  .viewfinder{
+    position:relative;max-width:640px;width:100%;
+    padding:58px 44px;text-align:center;
+    background:rgba(23,27,33,.55);
+    border:1px solid var(--line);border-radius:14px;overflow:hidden;
+  }
+  .viewfinder .corner{position:absolute;width:22px;height:22px;border:2px solid var(--accent);opacity:.85;pointer-events:none}
+  .corner.tl{top:10px;left:10px;border-right:0;border-bottom:0}
+  .corner.tr{top:10px;right:10px;border-left:0;border-bottom:0}
+  .corner.bl{bottom:10px;left:10px;border-right:0;border-top:0}
+  .corner.br{bottom:10px;right:10px;border-left:0;border-top:0}
+  .sweep{
+    position:absolute;left:0;right:0;top:0;height:140px;pointer-events:none;
+    background:linear-gradient(180deg,transparent,rgba(255,180,84,.07),transparent);
+    transform:translateY(-160px);
+    animation:sweep 5.5s cubic-bezier(.4,0,.6,1) infinite;
+  }
+  @keyframes sweep{55%,100%{transform:translateY(720px)}}
+  .strip{display:flex;gap:10px;justify-content:center;margin-bottom:30px}
+  .strip span{
+    width:44px;height:32px;border:1.5px dashed var(--line-2);border-radius:5px;
+    animation:blink 2.4s ease-in-out infinite;animation-delay:calc(var(--i)*.25s);
+  }
+  @keyframes blink{0%,100%{border-color:var(--line-2);opacity:.5}50%{border-color:var(--accent-line);opacity:1}}
+  .ph-title{font-family:var(--font-display);font-weight:700;font-size:clamp(26px,4.5vw,40px);line-height:1.15}
+  .ph-title i{font-style:normal;color:var(--accent)}
+  .ph-sub{margin:16px auto 30px;max-width:430px;color:var(--muted)}
+  .ph-meta{margin-top:24px;font-family:var(--font-mono);font-size:11px;color:var(--dim);letter-spacing:.06em;text-transform:uppercase}
+  .ph-warn{
+    margin-top:22px;padding:12px 16px;border-radius:9px;
+    border:1px solid rgba(255,120,120,.35);background:rgba(255,120,120,.08);
+    color:#ffb3b3;font-size:13px;
+  }
+  #restoreBtn{margin-top:16px}
+
+  /* ── галерея + просмотрщик ── */
+  #gallery{
+    display:flex;
+    flex:1;
+    min-height:0;
+  }
+  .side{
+    flex:1;
+    min-width:0;
+    min-height:0;
+    overflow-y:auto;
+    overscroll-behavior:contain;
+  }
+  body.viewing .side{
+    flex:0 0 300px;
+    border-right:1px solid var(--line);
+  }
+  .toolbar{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:18px 22px 2px}
+  .summary{font-size:14px;color:var(--muted)}
+  .summary b{color:var(--text);font-weight:600}
+  .status{margin-left:auto;display:flex;align-items:center;gap:8px;font-family:var(--font-mono);font-size:12px;color:var(--muted)}
+  .status .pulse{width:8px;height:8px;border-radius:50%;background:var(--accent);animation:pulse 1s ease-in-out infinite}
+  .status.done .pulse{background:var(--ok);animation:none}
+  @keyframes pulse{50%{opacity:.3;transform:scale(.8)}}
+
+  .controls{
+    display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+    padding:10px 22px 0;
+  }
+  .search{
+    flex:1;min-width:180px;
+    background:var(--panel);border:1px solid var(--line);border-radius:9px;
+    color:var(--text);padding:9px 12px;
+    font-family:var(--font-body);font-size:13px;
+    transition:border-color .15s ease,box-shadow .15s ease;
+  }
+  .search::placeholder{color:var(--dim)}
+  .search:focus{outline:none;border-color:var(--accent-line);box-shadow:0 0 0 3px var(--accent-soft)}
+  .sort{
+    background:var(--panel);border:1px solid var(--line);border-radius:9px;
+    color:var(--text);padding:9px 10px;
+    font-family:var(--font-body);font-size:13px;cursor:pointer;
+  }
+  .sort:focus{outline:none;border-color:var(--accent-line)}
+  .auto{
+    display:inline-flex;align-items:center;gap:6px;
+    font-size:12px;color:var(--muted);cursor:pointer;user-select:none;
+    padding:6px 2px;
+  }
+  .auto input{width:15px;height:15px;accent-color:var(--accent);cursor:pointer}
+  .search:disabled,.sort:disabled{opacity:.5;cursor:not-allowed}
+  .auto input:disabled{cursor:not-allowed}
+
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(185px,1fr));gap:14px;padding:16px 22px 80px}
+  body.viewing .grid{padding-bottom:40px}
+  .card{
+    position:relative;background:var(--panel);
+    border:1px solid var(--line);border-radius:10px;overflow:hidden;cursor:pointer;
+    transition:transform .18s ease,border-color .18s ease,box-shadow .18s ease;
+    animation:rise .4s both;animation-delay:calc(var(--i)*22ms);
+  }
+  @keyframes rise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+  .card:hover{transform:translateY(-3px);border-color:var(--accent-line);box-shadow:0 10px 30px rgba(0,0,0,.35)}
+  .card:active{transform:translateY(-1px)}
+  .card.active{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent),0 0 24px rgba(255,180,84,.18)}
+  .thumb{
+    position:relative;aspect-ratio:4/3;display:grid;place-items:center;padding:8px;
+    background:repeating-conic-gradient(#1a1f27 0 25%, #151a21 0 50%) 0 0/18px 18px;
+  }
+  .thumb img{
+    width:100%;height:100%;object-fit:contain;
+    opacity:0;transform:scale(.97);
+    transition:opacity .35s ease,transform .35s ease;
+  }
+  .thumb img.loaded{opacity:1;transform:none}
+  .card:hover .thumb img.loaded{transform:scale(1.03)}
+  .thumb.broken::after{content:'⚠';font-size:22px;color:var(--dim)}
+  .card figcaption{padding:10px 12px 12px;border-top:1px solid var(--line)}
+  .card .name{display:block;font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .card .meta{display:block;margin-top:3px;font-family:var(--font-mono);font-size:11px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+  .empty{grid-column:1/-1;text-align:center;padding:90px 20px;color:var(--muted)}
+  .empty .big{font-size:42px;margin-bottom:14px;opacity:.6}
+
+  /* ── виртуализация ── */
+  #grid.virtual{
+    display:block;
+    position:relative;
+  }
+  #grid.virtual .card{
+    position:absolute;
+    animation:none;
+  }
+  #grid.virtual .virtual-spacer{
+    position:relative;
+    width:100%;
+    pointer-events:none;
+  }
+
+  /* ── область просмотра ── */
+  .viewer{
+    flex:1;
+    min-width:0;
+    min-height:0;
+    display:flex;
+    flex-direction:column;
+    overflow:hidden;
+    background:#0b0d10;
+  }
+  .stage{
+    flex:1;
+    display:grid;
+    place-items:center;
+    padding:24px;
+    overflow:hidden;
+    position:relative;
+    min-height:0;
+    background:repeating-conic-gradient(#101318 0 25%, #0d1015 0 50%) 0 0/24px 24px;
+    touch-action:none;
+  }
+  .stage img{
+    width:auto;
+    height:auto;
+    max-width:100%;
+    max-height:100%;
+    object-fit:contain;
+    box-shadow:0 8px 40px rgba(0,0,0,.5);
+    border-radius:4px;
+    opacity:0;
+    transform:scale(.985);
+    transition:opacity .25s ease;
+    transform-origin:center center;
+    will-change:transform;
+  }
+  .stage img.anim{transition:opacity .25s ease, transform .22s ease}
+  .stage img.loaded{opacity:1;transform:none}
+  .stage img.preparing {
+    opacity: 0 !important;
+    visibility: hidden;
+    transition: none !important;
+  }
+  .stage.zoomed{cursor:grab}
+  .stage.grabbing{cursor:grabbing}
+
+  .stage-error{
+    position:absolute;inset:0;z-index:2;
+    display:grid;place-items:center;text-align:center;
+    color:var(--muted);background:rgba(11,13,16,.88);
+    padding:24px;
+  }
+  .stage-error .big{font-size:42px;margin-bottom:14px;opacity:.6}
+
+  .vbar{
+    flex:none;
+    display:flex;align-items:center;gap:12px;
+    padding:12px 16px;
+    border-top:1px solid var(--line);
+    background:rgba(15,17,20,.92);
+  }
+  .vcount{font-family:var(--font-mono);font-size:12px;color:var(--accent);white-space:nowrap}
+  .vdim{font-family:var(--font-mono);font-size:12px;color:var(--muted);white-space:nowrap}
+  .vzoom{
+    font-family:var(--font-mono);
+    font-size:12px;
+    color:var(--muted);
+    white-space:nowrap;
+    min-width:52px;
+    text-align:right;
+  }
+  .vname{
+    flex:1;text-align:center;font-size:13px;color:var(--muted);
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  }
+
+  /* ── fullscreen + скрытие панели ── */
+  .viewer .vbar{transition:opacity .25s ease, transform .25s ease}
+  .viewer.ui-hidden{cursor:none}
+  .viewer.ui-hidden .vbar{
+    opacity:0;
+    pointer-events:none;
+    transform:translateY(100%);
+  }
+  .viewer.ui-hidden .stage.zoomed{cursor:grab}
+  .viewer.ui-hidden .stage.grabbing{cursor:grabbing}
+
+  .viewer:fullscreen{
+    width:100vw;
+    height:100vh;
+    background:#000;
+  }
+  .viewer:fullscreen .stage{padding:0}
+  .viewer:fullscreen .stage img{box-shadow:0 12px 60px rgba(0,0,0,.65)}
+  .viewer:fullscreen .vbar{
+    position:absolute;
+    left:0;right:0;bottom:0;
+    z-index:5;
+    border-top:1px solid var(--line);
+    background:rgba(15,17,20,.92);
+    backdrop-filter:blur(10px);
+  }
+  .viewer:fullscreen .vbar .vname{max-width:45vw}
+  .viewer:fullscreen .vbar .vzoom{min-width:60px}
+
+  .foot{
+    position:fixed;left:20px;bottom:14px;z-index:10;pointer-events:none;
+    font-family:var(--font-mono);font-size:10.5px;color:var(--dim);letter-spacing:.04em;
+    transition:opacity .3s;
+  }
+  body.viewing .foot{opacity:0}
+
+  /* ── тосты ── */
+  .toast-container {
+    position: fixed;
+    right: 20px;
+    bottom: 20px;
+    z-index: 200;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    pointer-events: none;
+  }
+
+  .toast {
+    pointer-events: auto;
+    min-width: 220px;
+    max-width: 360px;
+    padding: 10px 14px;
+    border-radius: 10px;
+    border: 1px solid var(--line-2);
+    background: var(--panel-2);
+    color: var(--text);
+    font-size: 13px;
+    box-shadow: 0 10px 30px rgba(0,0,0,.35);
+    animation: toastIn .18s ease;
+    transition: opacity .2s ease;
+  }
+
+  .toast.error {
+    border-color: rgba(255,120,120,.45);
+    background: rgba(255,120,120,.10);
+    color: #ffb3b3;
+  }
+
+  .toast.success {
+    border-color: rgba(143,216,192,.45);
+    background: rgba(143,216,192,.10);
+    color: var(--ok);
+  }
+
+  @keyframes toastIn {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: none; }
+  }
+
+  /* ── справка ── */
+  .help-overlay{
+    position:fixed;inset:0;z-index:130;
+    display:grid;place-items:center;
+    background:rgba(7,9,12,.72);
+    backdrop-filter:blur(8px);
+    padding:24px;
+  }
+  .help{
+    width:min(760px,100%);
+    max-height:min(82vh,760px);
+    background:var(--panel);
+    border:1px solid var(--line-2);
+    border-radius:14px;
+    box-shadow:0 24px 80px rgba(0,0,0,.5);
+    display:flex;flex-direction:column;overflow:hidden;
+  }
+  .help-head{
+    display:flex;align-items:center;justify-content:space-between;gap:12px;
+    padding:16px 18px;border-bottom:1px solid var(--line);
+    background:var(--panel-2);
+  }
+  .help-head h2{
+    font-family:var(--font-display);
+    font-size:18px;font-weight:600;letter-spacing:.04em;
+  }
+  .help-body{
+    padding:18px 20px 22px;
+    overflow-y:auto;
+    color:var(--muted);
+    font-size:14px;line-height:1.55;
+  }
+  .help-body section + section{margin-top:18px}
+  .help-body h3{
+    font-family:var(--font-display);
+    font-size:13px;letter-spacing:.08em;text-transform:uppercase;
+    color:var(--text);margin-bottom:10px;
+  }
+  .help-body ol,.help-body ul{padding-left:20px;display:grid;gap:6px}
+  .help-body b{color:var(--text)}
+  .help-body code{
+    font-family:var(--font-mono);font-size:12px;
+    background:#101318;border:1px solid var(--line);border-radius:5px;
+    padding:2px 6px;color:var(--accent);
+  }
+  .help table{width:100%;border-collapse:collapse;font-size:13px}
+  .help th,.help td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+  .help th{
+    color:var(--dim);font-family:var(--font-mono);font-size:11px;
+    text-transform:uppercase;letter-spacing:.06em;
+  }
+  .help td:first-child{white-space:nowrap;width:180px}
+  .help .note{
+    margin-top:14px;padding:10px 12px;border-radius:9px;
+    border:1px solid var(--line);background:var(--panel-2);
+    font-size:13px;
+  }
+
+  #infoBody td {
+    color: var(--text);
+  }
+  #infoBody td:first-child {
+    color: var(--dim);
+  }
+  #infoBody .note {
+    margin-top: 14px;
+  }
+
+  @media (max-width:700px){
+    body.viewing .side{display:none}
+  }
+  @media (max-width:560px){
+    .grid{grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px;padding:14px 14px 80px}
+    .chip{max-width:200px}
+    .viewfinder{padding:44px 24px}
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+</style>
+</head>
+<body>
+<div class="glow"></div>
+
+<header class="topbar" id="topbar">
+  <div class="brand">
+    <span class="mark">
+      <svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>
+    </span>
+    <b>IMG<i>·</i>VIEWER</b>
+  </div>
+  <div class="spacer"></div>
+  <div class="chip" id="chip" hidden>
+    <span class="dot"></span>
+    <span class="name" id="folderName"></span>
+  </div>
+  <div class="stats" id="stats" hidden></div>
+  <button class="btn" id="pickBtn2" hidden>Другая папка</button>
+  <button class="btn" id="forgetBtn" hidden aria-label="Забыть папку">Забыть папку</button>
+  <button class="btn" id="clearCacheBtn" hidden aria-label="Очистить кэш">Очистить кэш</button>
+  <div class="scan-progress" aria-hidden="true"><div class="bar"></div></div>
+</header>
+
+<main>
+  <!-- экран до выбора папки -->
+  <section class="placeholder" id="placeholder">
+    <div class="viewfinder">
+      <span class="corner tl"></span><span class="corner tr"></span>
+      <span class="corner bl"></span><span class="corner br"></span>
+      <div class="sweep"></div>
+      <div class="strip">
+        <span style="--i:0"></span><span style="--i:1"></span><span style="--i:2"></span>
+        <span style="--i:3"></span><span style="--i:4"></span>
+      </div>
+      <h1 class="ph-title">Просмотрщик <i>изображений</i></h1>
+      <p class="ph-sub">Выберите папку на устройстве — приложение отсканирует её
+         и покажет все поддерживаемые изображения (PNG, JPEG, WebP, AVIF, BMP) в виде списка с миниатюрами.</p>
+      <button class="btn btn-primary btn-lg" id="pickBtn">Выбрать папку</button>
+      <div class="ph-meta">Chrome · File System Access API · IndexedDB · файлы не покидают устройство</div>
+      <div class="ph-warn" id="warn" hidden>
+        Ваш браузер не поддерживает выбор папки (File System Access API).
+        Откройте этот файл в <b>Chrome</b> — он работает только там.
+      </div>
+      <div class="ph-warn" id="restoreWarn" hidden>
+        Доступ к сохранённой папке не подтверждён.
+        Нажмите «Попробовать снова» или выберите другую папку.
+      </div>
+      <button class="btn" id="restoreBtn" hidden>Попробовать снова</button>
+    </div>
+  </section>
+
+  <!-- галерея + просмотр -->
+  <section id="gallery" hidden>
+    <div class="side" id="side">
+      <div class="toolbar">
+        <div class="summary" id="summary"></div>
+        <div class="status" id="status" role="status" aria-live="polite"><span class="pulse"></span><span id="statusText">сканирование…</span></div>
+      </div>
+
+      <div class="controls">
+        <label class="sr-only" for="search">Поиск по имени файла</label>
+        <input class="search" id="search" type="search" placeholder="Поиск по имени файла…" autocomplete="off" spellcheck="false">
+        <label class="sr-only" for="sort">Сортировка</label>
+        <select class="sort" id="sort" title="Сортировка">
+          <option value="name">По имени</option>
+          <option value="date">По дате изменения</option>
+          <option value="size">По размеру</option>
+          <option value="type">По типу</option>
+        </select>
+        <button class="btn btn-icon" id="refreshBtn" title="Обновить (R)" aria-label="Обновить список">⟳</button>
+        <label class="auto" title="Автоматическое обновление">
+          <input type="checkbox" id="autoChk" checked> авто
+        </label>
+      </div>
+
+      <div class="grid" id="grid"></div>
+    </div>
+
+    <div class="viewer" id="viewer" hidden>
+      <div class="stage" id="stage">
+        <img id="viewImg" alt="" draggable="false" decoding="async">
+        <div class="stage-error" id="stageError" hidden>
+          <div>
+            <div class="big">⚠</div>
+            Не удалось загрузить изображение
+          </div>
+        </div>
+      </div>
+      <div class="vbar">
+        <button class="btn btn-icon" id="prevBtn" title="Назад (←)" aria-label="Предыдущее изображение">←</button>
+        <span class="vcount" id="vCount"></span>
+        <span class="vname" id="vName"></span>
+        <span class="vdim" id="vDim"></span>
+        <span class="vzoom" id="vZoom" title="Масштаб относительно оригинала"></span>
+        <button class="btn btn-icon" id="nextBtn" title="Вперёд (→)" aria-label="Следующее изображение">→</button>
+        <button class="btn btn-icon" id="fsBtn" title="Полный экран (F)" aria-label="Полный экран">⛶</button>
+        <button class="btn btn-icon" id="closeBtn" title="Закрыть (Esc)" aria-label="Закрыть просмотр">✕</button>
+      </div>
+    </div>
+  </section>
+</main>
+
+<div class="foot">локально · изображения никуда не отправляются</div>
+
+<div class="help-overlay" id="helpOverlay" hidden>
+  <div class="help" role="dialog" aria-modal="true" aria-labelledby="helpTitle">
+    <div class="help-head">
+      <h2 id="helpTitle">Справка · Просмотрщик изображений</h2>
+      <button class="btn btn-icon" id="helpCloseBtn" title="Закрыть (Esc)" aria-label="Закрыть справку">✕</button>
+    </div>
+    <div class="help-body">
+      <section>
+        <h3>Как пользоваться</h3>
+        <ol>
+          <li>Нажмите <b>«Выбрать папку»</b> и разрешите браузеру чтение папки.</li>
+          <li>Приложение рекурсивно найдёт поддерживаемые изображения: <code>.png</code>, <code>.jpg</code>, <code>.jpeg</code>, <code>.webp</code>, <code>.avif</code>, <code>.bmp</code> и покажет их в сетке с миниатюрами.</li>
+          <li>Кликните по файлу, чтобы открыть его в просмотрщике.</li>
+          <li>Листайте изображения стрелками, зумьте колесом мыши и перетаскивайте картинку при увеличении.</li>
+        </ol>
+      </section>
+
+      <section>
+        <h3>Горячие клавиши</h3>
+        <table>
+          <thead>
+            <tr><th>Клавиша</th><th>Действие</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>←</code> / <code>→</code></td><td>Предыдущее / следующее изображение</td></tr>
+            <tr><td><code>F</code></td><td>Полный экран / выход из полного экрана</td></tr>
+            <tr><td><code>R</code></td><td>Обновить список файлов</td></tr>
+            <tr><td><code>I</code></td><td>Информация о файле</td></tr>
+            <tr><td><code>+</code> / <code>-</code></td><td>Увеличить / уменьшить масштаб</td></tr>
+            <tr><td><code>0</code></td><td>Сбросить масштаб и позицию</td></tr>
+            <tr><td><code>Esc</code></td><td>Закрыть просмотр или справку</td></tr>
+            <tr><td><code>F1</code></td><td>Показать / закрыть эту справку</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section>
+        <h3>Функции</h3>
+        <ul>
+          <li><b>Форматы</b> — поддерживаются PNG, JPEG, WebP, AVIF, BMP.</li>
+          <li><b>Поиск</b> — мгновенно фильтрует файлы по имени. Работает по всем найденным изображениям, включая подпапки.</li>
+          <li><b>Сортировка</b> — «По имени», «По дате изменения» или «По размеру». Для чисел в именах используется естественная сортировка.</li>
+          <li><b>Автообновление</b> — периодически пересканирует папку и показывает новые/изменённые файлы. Интервал автоматически растёт с количеством файлов, чтобы не нагружать систему.</li>
+          <li><b>Обновить</b> — ручной перескан папки без изменения поиска и сортировки.</li>
+        </ul>
+        <div class="note">Все операции выполняются локально в браузере. Изображения не загружаются на сервер и не покидают устройство.</div>
+      </section>
+    </div>
+  </div>
+</div>
+
+<div class="help-overlay" id="infoOverlay" hidden>
+  <div class="help" role="dialog" aria-modal="true" aria-labelledby="infoTitle">
+    <div class="help-head">
+      <h2 id="infoTitle">Информация о файле</h2>
+      <button class="btn btn-icon" id="infoCloseBtn" title="Закрыть (Esc)" aria-label="Закрыть информацию">✕</button>
+    </div>
+    <div class="help-body" id="infoBody"></div>
+  </div>
+</div>
+
+<div id="toastContainer" class="toast-container" aria-live="polite"></div>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+
+  const CONFIG = Object.freeze({
+    MAX_ZOOM: 8,
+    ZOOM_STEP: 1.15,
+    THUMB_MAX: 320,
+    MAX_THUMB_CONCURRENT: 3,
+    INITIAL_CHUNK: 120,
+    RENDER_CHUNK: 60,
+    AUTO_REFRESH_MIN: 500,
+    AUTO_REFRESH_MAX: 10000
+  });
+
+  const IMAGE_EXT_RE = /\.(png|jpe?g|webp|avif|bmp)$/i;
+  const AVIF_BRANDS = new Set([
+    'avif', 'avis', 'av01', 'av02', 'av03', 'av04', 'av05',
+    'av06', 'av07', 'av08', 'av09', 'av10', 'mif1', 'mis1'
+  ]);
+
+  const grid = $('grid'), gallery = $('gallery'), placeholder = $('placeholder');
+  const topbar = $('topbar'), chip = $('chip'), folderName = $('folderName');
+  const stats = $('stats'), summary = $('summary');
+  const status = $('status'), statusText = $('statusText');
+  const pickBtn = $('pickBtn'), pickBtn2 = $('pickBtn2');
+  const forgetBtn = $('forgetBtn'), clearCacheBtn = $('clearCacheBtn');
+  const searchInput = $('search'), sortSelect = $('sort'), refreshBtn = $('refreshBtn'), autoChk = $('autoChk');
+  const restoreBtn = $('restoreBtn'), restoreWarn = $('restoreWarn'), warn = $('warn');
+
+  const SORT_KEY = 'pngviewer.sort';
+
+  function getSavedSort() {
+    try {
+      const saved = localStorage.getItem(SORT_KEY);
+      if (saved && ['name', 'date', 'size', 'type'].includes(saved)) return saved;
+    } catch {}
+    return 'name';
+  }
+
+  sortSelect.value = getSavedSort();
+
+  const viewer = $('viewer'), viewImg = $('viewImg');
+  viewImg.decoding = 'async';
+  const stage = $('stage'), stageError = $('stageError');
+  const vCount = $('vCount'), vName = $('vName'), vDim = $('vDim'), vZoom = $('vZoom');
+  const prevBtn = $('prevBtn'), nextBtn = $('nextBtn'), closeBtn = $('closeBtn');
+  const fsBtn = $('fsBtn');
+  const side = $('side');
+
+  const helpOverlay = $('helpOverlay'), helpCloseBtn = $('helpCloseBtn');
+  const infoOverlay = $('infoOverlay');
+  const infoCloseBtn = $('infoCloseBtn');
+  const infoBody = $('infoBody');
+
+  let infoOpen = false;
+  let infoReturnFocus = null;
+
+  const supported = 'showDirectoryPicker' in window;
+
+  /* ── тосты ── */
+  function showToast(message, type = 'info', timeout = 3500) {
+    const container = document.getElementById('toastContainer');
+    if (!container) return;
+
+    const now = Date.now();
+    if (showToast._last && showToast._last.msg === message && now - showToast._last.at < 2500) return;
+    showToast._last = { msg: message, at: now };
+
+    while (container.children.length >= 4) {
+      container.firstChild.remove();
+    }
+
+    const el = document.createElement('div');
+    el.className = 'toast ' + type;
+    el.textContent = message;
+    container.appendChild(el);
+
+    setTimeout(() => {
+      el.style.opacity = '0';
+      setTimeout(() => el.remove(), 200);
+    }, timeout);
+  }
+
+  let dirHandle = null;
+  let items = [];
+  let displayItems = [];
+  let cards = [];
+  const cardItems = new WeakMap();
+  let current = -1;
+  let currentKey = null;
+
+  let activeFullItem = null;
+  const fullUrls = new Set();
+  const thumbUrls = new Set();
+
+  let scanning = false;
+  let scanToken = 0;
+  let scanStartedAt = 0;
+  let scanFoundCount = 0;
+  let scanSkippedCount = 0;
+  let lastScanStatusUpdate = 0;
+  let autoTimer = null;
+  let autoEnabled = true;
+  try {
+    autoEnabled = localStorage.getItem('pngviewer.autoRefresh') !== '0';
+  } catch {
+    autoEnabled = true;
+  }
+  autoChk.checked = autoEnabled;
+
+  /* ── зум / пан / fullscreen UI ── */
+  let scale = 1, tx = 0, ty = 0;
+  let viewToken = 0;
+  let panning = false;
+  let panPointerId = null;
+  let panStartX = 0, panStartY = 0, panStartTx = 0, panStartTy = 0;
+  let uiTimer = null;
+
+  /* ── чанковая отрисовка ── */
+  let renderedCount = 0;
+  let renderTarget = 0;
+  let renderScheduled = false;
+  let renderGeneration = 0;
+
+  /* ── виртуализация ── */
+  const VIRTUAL_THRESHOLD = 500;
+  const VIRTUAL_GAP = 14;
+  let virtualRowHeight = 220;
+  let virtualDrawn = new Set();
+  let virtualActiveCard = null;
+  let virtualScrollRaf = 0;
+  let virtualResizeRaf = 0;
+
+  /* ── миниатюры ── */
+  let thumbQueue = [];
+  let thumbActive = 0;
+
+  /* ── inline worker для миниатюр ── */
+  const thumbWorkerCode = `
+    self.onmessage = async (e) => {
+      const data = e.data || {};
+      const id = data.id;
+      const file = data.file;
+      const maxDim = data.maxDim || 320;
+      const w = data.w || 0;
+      const h = data.h || 0;
+
+      try {
+        if (!file) throw new Error('no file');
+
+        let origW = w;
+        let origH = h;
+
+        let options = {
+          imageOrientation: 'from-image'
+        };
+
+        if (w > 0 && h > 0) {
+          const k = Math.min(1, maxDim / Math.max(w, h));
+          options.resizeWidth = Math.max(1, Math.round(w * k));
+          options.resizeHeight = Math.max(1, Math.round(h * k));
+          options.resizeQuality = 'medium';
+        }
+
+        let bitmap;
+        try {
+          bitmap = await createImageBitmap(file, options);
+        } catch (err) {
+          try {
+            const opts = Object.assign({}, options);
+            delete opts.imageOrientation;
+            bitmap = await createImageBitmap(file, opts);
+          } catch (err2) {
+            bitmap = await createImageBitmap(file);
+          }
+        }
+
+        if (!bitmap) throw new Error('createImageBitmap failed');
+
+        if (!origW || !origH) {
+          origW = bitmap.width;
+          origH = bitmap.height;
+        }
+
+        let canvas;
+        let ctx;
+
+        if (bitmap.width > maxDim || bitmap.height > maxDim) {
+          const k = Math.min(1, maxDim / Math.max(bitmap.width, bitmap.height));
+          const rw = Math.max(1, Math.round(bitmap.width * k));
+          const rh = Math.max(1, Math.round(bitmap.height * k));
+
+          canvas = new OffscreenCanvas(rw, rh);
+          ctx = canvas.getContext('2d');
+          ctx.drawImage(bitmap, 0, 0, rw, rh);
+        } else {
+          canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+          ctx = canvas.getContext('2d');
+          ctx.drawImage(bitmap, 0, 0);
+        }
+
+        if (bitmap.close) bitmap.close();
+
+        let blob;
+        try {
+          blob = await canvas.convertToBlob({ type: 'image/webp', quality: 0.8 });
+        } catch (err) {
+          blob = await canvas.convertToBlob({ type: 'image/png' });
+        }
+
+        if (!blob) throw new Error('toBlob failed');
+
+        self.postMessage({ id, blob, w: origW, h: origH });
+      } catch (err) {
+        self.postMessage({ id, error: String((err && err.message) || err) });
+      }
+    };
+  `;
+
+  const MAX_WORKERS = Math.min(3, navigator.hardwareConcurrency || 2);
+  const thumbWorkers = [];
+  const workerJobs = new Map();
+  let workerJobId = 0;
+  let workerIndex = 0;
+
+  const canUseThumbWorker =
+    typeof Worker !== 'undefined' &&
+    typeof OffscreenCanvas !== 'undefined' &&
+    typeof OffscreenCanvas.prototype !== 'undefined' &&
+    typeof OffscreenCanvas.prototype.convertToBlob === 'function';
+
+  function createThumbWorker() {
+    const blob = new Blob([thumbWorkerCode], { type: 'text/javascript' });
+    const url = URL.createObjectURL(blob);
+    const worker = new Worker(url);
+
+    worker._blobUrl = url;
+    worker._dead = false;
+
+    worker.onmessage = (e) => {
+      const data = e.data || {};
+      const job = workerJobs.get(data.id);
+      if (!job) return;
+
+      workerJobs.delete(data.id);
+
+      if (data.error) {
+        job.reject(new Error(data.error));
+      } else if (data.blob) {
+        job.resolve({ blob: data.blob, w: data.w || 0, h: data.h || 0 });
+      } else {
+        job.reject(new Error('worker returned no blob'));
+      }
+    };
+
+    worker.onerror = (e) => {
+      worker._dead = true;
+
+      for (const [id, job] of workerJobs) {
+        if (job.worker === worker) {
+          workerJobs.delete(id);
+          job.reject(new Error('worker error: ' + (e.message || 'unknown')));
+        }
+      }
+    };
+
+    return worker;
+  }
+
+  function ensureThumbWorkers() {
+    if (!canUseThumbWorker) return;
+
+    for (let i = thumbWorkers.length - 1; i >= 0; i--) {
+      const w = thumbWorkers[i];
+      if (w._dead) {
+        try { w.terminate(); } catch {}
+        if (w._blobUrl) URL.revokeObjectURL(w._blobUrl);
+        thumbWorkers.splice(i, 1);
+      }
+    }
+
+    while (thumbWorkers.length < MAX_WORKERS) {
+      thumbWorkers.push(createThumbWorker());
+    }
+  }
+
+  function pickThumbWorker() {
+    ensureThumbWorkers();
+    if (!thumbWorkers.length) throw new Error('worker unavailable');
+
+    const worker = thumbWorkers[workerIndex % thumbWorkers.length];
+    workerIndex++;
+    return worker;
+  }
+
+  async function generateThumbInWorker(it, token) {
+    if (!canUseThumbWorker) throw new Error('worker unsupported');
+
+    const file = await getFile(it);
+    if (!file) throw new Error('no file');
+
+    const worker = pickThumbWorker();
+    const id = ++workerJobId;
+
+    const job = new Promise((resolve, reject) => {
+      workerJobs.set(id, { resolve, reject, worker, it, token });
+    });
+
+    try {
+      worker.postMessage({
+        id,
+        file,
+        maxDim: CONFIG.THUMB_MAX,
+        w: it.w || 0,
+        h: it.h || 0,
+        type: it.type
+      });
+    } catch (e) {
+      workerJobs.delete(id);
+      throw e;
+    }
+
+    it.file = undefined;
+    return job;
+  }
+
+  /* ── кэш размера stage ── */
+  let stageContentSize = { w: 0, h: 0 };
+
+  /* ── справка ── */
+  let helpOpen = false;
+  let helpReturnFocus = null;
+
+  /* ── цветовая информация ── */
+  function fallbackColorInfo() {
+    return {
+      profile: 'unknown',
+      color: 'unknown',
+      bitDepth: null,
+      cmyk: false
+    };
+  }
+
+  async function getPngColorInfo(file) {
+    try {
+      const buf = await file.slice(0, 26).arrayBuffer();
+      const v = new DataView(buf);
+
+      if (v.byteLength < 26) return null;
+
+      if (
+        v.getUint8(0) !== 0x89 ||
+        v.getUint8(1) !== 0x50 ||
+        v.getUint8(2) !== 0x4e ||
+        v.getUint8(3) !== 0x47 ||
+        v.getUint8(4) !== 0x0d ||
+        v.getUint8(5) !== 0x0a ||
+        v.getUint8(6) !== 0x1a ||
+        v.getUint8(7) !== 0x0a
+      ) return null;
+
+      if (v.getUint32(8) !== 13) return null;
+
+      if (
+        v.getUint8(12) !== 0x49 ||
+        v.getUint8(13) !== 0x48 ||
+        v.getUint8(14) !== 0x44 ||
+        v.getUint8(15) !== 0x52
+      ) return null;
+
+      const bitDepth = v.getUint8(24);
+      const colorType = v.getUint8(25);
+
+      let color = 'unknown';
+      switch (colorType) {
+        case 0:
+          color = 'gray';
+          break;
+        case 2:
+          color = 'rgb';
+          break;
+        case 3:
+          color = 'palette';
+          break;
+        case 4:
+          color = 'gray';
+          break;
+        case 6:
+          color = 'rgba';
+          break;
+        default:
+          color = 'unknown';
+      }
+
+      return {
+        profile: 'none',
+        color,
+        bitDepth,
+        cmyk: false
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  async function getJpegColorInfo(file) {
+    try {
+      const buf = await file.slice(0, 65536).arrayBuffer();
+      const v = new DataView(buf);
+
+      if (v.byteLength < 4) return null;
+      if (v.getUint8(0) !== 0xff || v.getUint8(1) !== 0xd8) return null;
+
+      let offset = 2;
+      const end = v.byteLength;
+      let profile = 'none';
+      let cmyk = false;
+
+      while (offset + 2 <= end) {
+        if (v.getUint8(offset) !== 0xff) {
+          offset++;
+          continue;
+        }
+
+        const marker = v.getUint8(offset + 1);
+
+        if (marker === 0xff) {
+          offset++;
+          continue;
+        }
+
+        if (marker === 0x00 || (marker >= 0xd0 && marker <= 0xd7) || marker === 0x01) {
+          offset += 2;
+          continue;
+        }
+
+        if (marker === 0xd8 || marker === 0xd9 || marker === 0xda) {
+          break;
+        }
+
+        if (offset + 4 > end) break;
+        const len = v.getUint16(offset + 2);
+        if (len < 2) {
+          offset += 2;
+          continue;
+        }
+
+        const segStart = offset + 4;
+        const segEnd = Math.min(end, offset + 2 + len);
+
+        if (marker === 0xe2) {
+          // APP2 ICC_PROFILE
+          if (segEnd - segStart >= 13) {
+            if (
+              v.getUint8(segStart) === 0x49 &&
+              v.getUint8(segStart + 1) === 0x43 &&
+              v.getUint8(segStart + 2) === 0x43 &&
+              v.getUint8(segStart + 3) === 0x5f &&
+              v.getUint8(segStart + 4) === 0x50 &&
+              v.getUint8(segStart + 5) === 0x52 &&
+              v.getUint8(segStart + 6) === 0x4f &&
+              v.getUint8(segStart + 7) === 0x46 &&
+              v.getUint8(segStart + 8) === 0x49 &&
+              v.getUint8(segStart + 9) === 0x4c &&
+              v.getUint8(segStart + 10) === 0x4f &&
+              v.getUint8(segStart + 11) === 0x00
+            ) {
+              profile = 'icc';
+            }
+          }
+        } else if (marker === 0xee) {
+          // APP14 Adobe
+          if (offset + 8 <= segEnd && offset + 11 < segEnd) {
+            if (
+              v.getUint8(offset + 4) === 0x41 &&
+              v.getUint8(offset + 5) === 0x64 &&
+              v.getUint8(offset + 6) === 0x62 &&
+              v.getUint8(offset + 7) === 0x65
+            ) {
+              const transform = v.getUint8(offset + 11);
+              if (transform === 2) cmyk = true;
+            }
+          }
+        }
+
+        offset += 2 + len;
+      }
+
+      return {
+        profile,
+        color: 'unknown',
+        bitDepth: null,
+        cmyk
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  async function getBmpColorInfo(file) {
+    try {
+      const buf = await file.slice(0, 64).arrayBuffer();
+      const v = new DataView(buf);
+
+      if (v.byteLength < 26) return null;
+      if (v.getUint8(0) !== 0x42 || v.getUint8(1) !== 0x4d) return null;
+
+      const headerSize = v.getUint32(14, true);
+      let bitDepth = null;
+      let color = 'unknown';
+
+      if (headerSize === 40 || headerSize === 56 || headerSize === 108 || headerSize === 124) {
+        if (v.byteLength < 30) return null;
+        bitDepth = v.getUint16(28, true);
+      } else if (headerSize === 12) {
+        bitDepth = v.getUint16(24, true);
+      } else {
+        return null;
+      }
+
+      if (bitDepth === 1 || bitDepth === 4 || bitDepth === 8) {
+        color = 'palette';
+      } else if (bitDepth === 16 || bitDepth === 24 || bitDepth === 32) {
+        color = 'rgb';
+      }
+
+      return {
+        profile: 'none',
+        color,
+        bitDepth,
+        cmyk: false
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  async function getColorInfo(file, type) {
+    try {
+      switch (type) {
+        case 'png': {
+          const info = await getPngColorInfo(file);
+          return info || fallbackColorInfo();
+        }
+        case 'jpeg': {
+          const info = await getJpegColorInfo(file);
+          return info || fallbackColorInfo();
+        }
+        case 'bmp': {
+          const info = await getBmpColorInfo(file);
+          return info || fallbackColorInfo();
+        }
+        default:
+          return fallbackColorInfo();
+      }
+    } catch (e) {
+      console.warn('[colorInfo] Ошибка получения цветовой информации:', e);
+      return fallbackColorInfo();
+    }
+  }
+
+  async function createImageBitmapSafe(file, options) {
+    const withOrientation = Object.assign({ imageOrientation: 'from-image' }, options);
+
+    try {
+      return await createImageBitmap(file, withOrientation);
+    } catch (e) {
+      // Повторяем без imageOrientation, если браузер не поддерживает эту опцию.
+      const retryOptions = Object.assign({}, options);
+      delete retryOptions.imageOrientation;
+      return await createImageBitmap(file, retryOptions);
+    }
+  }
+
+  const io = new IntersectionObserver(entries => {
+    for (const e of entries) {
+      const card = e.target;
+      const it = cardItems.get(card);
+      if (!it) continue;
+
+      if (e.isIntersecting) {
+        if (it.broken) continue;
+        ensureThumb(it, card);
+      } else {
+        releaseThumb(it, card);
+      }
+    }
+  }, { root: side, rootMargin: '300px 0px' });
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c => ({
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#39;'
+    }[c]));
+  }
+
+  function plural(n, [one, few, many]) {
+    const a = Math.abs(n) % 100, b = a % 10;
+    if (a > 10 && a < 20) return many;
+    if (b > 1 && b < 5) return few;
+    if (b === 1) return one;
+    return many;
+  }
+
+  function fmtSize(b) {
+    if (b < 1024) return b + ' Б';
+    const u = ['КБ', 'МБ', 'ГБ']; let i = -1;
+    do { b /= 1024; i++; } while (b >= 1024 && i < 2);
+    const num = b >= 100 ? Math.round(b) : b.toFixed(1);
+    return String(num).replace('.', ',') + ' ' + u[i];
+  }
+
+  function formatSpeed(speed) {
+    if (!Number.isFinite(speed) || speed <= 0) return '0';
+    if (speed < 10) return speed.toFixed(1).replace('.', ',');
+    return String(Math.round(speed));
+  }
+
+  function updateScanStatus(force = false) {
+    const now = performance.now();
+
+    if (!force && now - lastScanStatusUpdate < 250) return;
+    lastScanStatusUpdate = now;
+
+    const elapsed = (now - scanStartedAt) / 1000;
+    const speed = elapsed > 0 ? scanFoundCount / elapsed : 0;
+
+    statusText.textContent =
+      'сканирование… найдено ' + scanFoundCount +
+      ' · ' + formatSpeed(speed) + ' ф/с';
+  }
+
+  function finalizeScanStatus() {
+    const elapsed = (performance.now() - scanStartedAt) / 1000;
+    const speed = elapsed > 0 ? scanFoundCount / elapsed : 0;
+
+    let text =
+      'готово · ' + scanFoundCount +
+      ' · ' + formatSpeed(speed) + ' ф/с';
+
+    if (scanSkippedCount > 0) {
+      text += ' · пропущено: ' + scanSkippedCount;
+    }
+
+    statusText.textContent = text;
+  }
+
+  async function detectImageType(file) {
+    try {
+      const buf = await file.slice(0, 16).arrayBuffer();
+      const v = new DataView(buf);
+
+      if (v.byteLength < 2) return null;
+
+      if (
+        v.byteLength >= 4 &&
+        v.getUint8(0) === 0x89 &&
+        v.getUint8(1) === 0x50 &&
+        v.getUint8(2) === 0x4e &&
+        v.getUint8(3) === 0x47
+      ) {
+        return 'png';
+      }
+
+      if (v.getUint8(0) === 0xff && v.getUint8(1) === 0xd8) {
+        return 'jpeg';
+      }
+
+      if (v.getUint8(0) === 0x42 && v.getUint8(1) === 0x4d) {
+        return 'bmp';
+      }
+
+      if (v.byteLength >= 12) {
+        const isRiff =
+          v.getUint8(0) === 0x52 &&
+          v.getUint8(1) === 0x49 &&
+          v.getUint8(2) === 0x46 &&
+          v.getUint8(3) === 0x46;
+
+        if (isRiff) {
+          const isWebp =
+            v.getUint8(8) === 0x57 &&
+            v.getUint8(9) === 0x45 &&
+            v.getUint8(10) === 0x42 &&
+            v.getUint8(11) === 0x50;
+
+          if (isWebp) return 'webp';
+        }
+
+        const isFtyp =
+          v.getUint8(4) === 0x66 &&
+          v.getUint8(5) === 0x74 &&
+          v.getUint8(6) === 0x79 &&
+          v.getUint8(7) === 0x70;
+
+        if (isFtyp) {
+          const brand = String.fromCharCode(
+            v.getUint8(8),
+            v.getUint8(9),
+            v.getUint8(10),
+            v.getUint8(11)
+          );
+
+          if (AVIF_BRANDS.has(brand)) return 'avif';
+        }
+      }
+
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  /* PNG: ширина и высота хранятся в заголовке IHDR — читаем только первые 24 байта */
+  async function getPngSize(file) {
+    try {
+      const buf = await file.slice(0, 24).arrayBuffer();
+      const v = new DataView(buf);
+
+      if (v.byteLength < 24) return null;
+
+      if (
+        v.getUint8(0) !== 0x89 ||
+        v.getUint8(1) !== 0x50 ||
+        v.getUint8(2) !== 0x4e ||
+        v.getUint8(3) !== 0x47 ||
+        v.getUint8(4) !== 0x0d ||
+        v.getUint8(5) !== 0x0a ||
+        v.getUint8(6) !== 0x1a ||
+        v.getUint8(7) !== 0x0a
+      ) return null;
+
+      if (v.getUint32(8) !== 13) return null;
+
+      if (
+        v.getUint8(12) !== 0x49 ||
+        v.getUint8(13) !== 0x48 ||
+        v.getUint8(14) !== 0x44 ||
+        v.getUint8(15) !== 0x52
+      ) return null;
+
+      const w = v.getUint32(16);
+      const h = v.getUint32(20);
+
+      if (!w || !h) return null;
+      return { w, h };
+    } catch {
+      return null;
+    }
+  }
+
+  async function getJpegSize(file) {
+    try {
+      const buf = await file.slice(0, 65536).arrayBuffer();
+      const v = new DataView(buf);
+
+      if (v.byteLength < 4) return null;
+      if (v.getUint8(0) !== 0xff || v.getUint8(1) !== 0xd8) return null;
+
+      let offset = 2;
+      const end = v.byteLength;
+
+      while (offset + 2 <= end) {
+        if (v.getUint8(offset) !== 0xff) {
+          offset++;
+          continue;
+        }
+
+        const marker = v.getUint8(offset + 1);
+
+        if (marker === 0xff) {
+          offset++;
+          continue;
+        }
+
+        if (marker === 0x00) {
+          offset += 2;
+          continue;
+        }
+
+        if (marker === 0xd8) {
+          offset += 2;
+          continue;
+        }
+
+        if (marker === 0xd9) break;
+
+        if (marker >= 0xd0 && marker <= 0xd7) {
+          offset += 2;
+          continue;
+        }
+
+        if (marker === 0x01) {
+          offset += 2;
+          continue;
+        }
+
+        if (marker === 0xda) break;
+
+        if (marker === 0xc4 || marker === 0xc8 || marker === 0xcc) {
+          if (offset + 4 > end) break;
+          const len = v.getUint16(offset + 2);
+          if (len < 2) {
+            offset += 2;
+            continue;
+          }
+          offset += 2 + len;
+          continue;
+        }
+
+        if (marker >= 0xc0 && marker <= 0xcf) {
+          if (offset + 9 > end) break;
+          const h = v.getUint16(offset + 5);
+          const w = v.getUint16(offset + 7);
+          if (w > 0 && h > 0) return { w, h };
+          return null;
+        }
+
+        if (offset + 4 > end) break;
+        const len = v.getUint16(offset + 2);
+        if (len < 2) {
+          offset += 2;
+          continue;
+        }
+        offset += 2 + len;
+      }
+
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  async function getWebPSize(file) {
+    try {
+      const buf = await file.slice(0, 64).arrayBuffer();
+      const v = new DataView(buf);
+
+      if (v.byteLength < 30) return null;
+
+      if (
+        v.getUint8(0) !== 0x52 ||
+        v.getUint8(1) !== 0x49 ||
+        v.getUint8(2) !== 0x46 ||
+        v.getUint8(3) !== 0x46
+      ) return null;
+
+      if (
+        v.getUint8(8) !== 0x57 ||
+        v.getUint8(9) !== 0x45 ||
+        v.getUint8(10) !== 0x42 ||
+        v.getUint8(11) !== 0x50
+      ) return null;
+
+      const c0 = v.getUint8(12);
+      const c1 = v.getUint8(13);
+      const c2 = v.getUint8(14);
+      const c3 = v.getUint8(15);
+
+      if (c0 === 0x56 && c1 === 0x50 && c2 === 0x38 && c3 === 0x20) {
+        const w = v.getUint16(26, true) & 0x3fff;
+        const h = v.getUint16(28, true) & 0x3fff;
+        if (w > 0 && h > 0) return { w, h };
+        return null;
+      }
+
+      if (c0 === 0x56 && c1 === 0x50 && c2 === 0x38 && c3 === 0x4c) {
+        if (v.getUint8(20) !== 0x2f) return null;
+        const bits = v.getUint32(21, true);
+        const w = (bits & 0x3fff) + 1;
+        const h = ((bits >>> 14) & 0x3fff) + 1;
+        if (w > 0 && h > 0) return { w, h };
+        return null;
+      }
+
+      if (c0 === 0x56 && c1 === 0x50 && c2 === 0x38 && c3 === 0x58) {
+        const w = (v.getUint8(24) | (v.getUint8(25) << 8) | (v.getUint8(26) << 16)) + 1;
+        const h = (v.getUint8(27) | (v.getUint8(28) << 8) | (v.getUint8(29) << 16)) + 1;
+        if (w > 0 && h > 0) return { w, h };
+        return null;
+      }
+
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  async function getBmpSize(file) {
+    try {
+      const buf = await file.slice(0, 64).arrayBuffer();
+      const v = new DataView(buf);
+
+      if (v.byteLength < 26) return null;
+      if (v.getUint8(0) !== 0x42 || v.getUint8(1) !== 0x4d) return null;
+
+      const headerSize = v.getUint32(14, true);
+      let w = 0;
+      let h = 0;
+
+      if (headerSize === 40 || headerSize === 56 || headerSize === 108 || headerSize === 124) {
+        w = v.getInt32(18, true);
+        h = v.getInt32(22, true);
+      } else if (headerSize === 12) {
+        w = v.getInt16(18, true);
+        h = v.getInt16(20, true);
+      } else {
+        return null;
+      }
+
+      w = Math.abs(w);
+      h = Math.abs(h);
+
+      if (w > 0 && h > 0) return { w, h };
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  async function getAvifSize(file) {
+    try {
+      const buf = await file.slice(0, 65536).arrayBuffer();
+      const bytes = new Uint8Array(buf);
+      const v = new DataView(buf);
+
+      for (let i = 0; i + 4 <= bytes.length; i++) {
+        if (
+          bytes[i] !== 0x69 ||
+          bytes[i + 1] !== 0x73 ||
+          bytes[i + 2] !== 0x70 ||
+          bytes[i + 3] !== 0x65
+        ) continue;
+
+        if (i < 4) continue;
+
+        const size = v.getUint32(i - 4);
+        if (size < 16 || size > 65536) continue;
+
+        if (i + 12 > bytes.length) continue;
+
+        const w = v.getUint32(i + 4);
+        const h = v.getUint32(i + 8);
+
+        if (w > 0 && h > 0 && w < 1000000 && h < 1000000) {
+          return { w, h };
+        }
+      }
+
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  async function getImageSize(file, type) {
+    switch (type) {
+      case 'png':
+        return await getPngSize(file);
+      case 'jpeg':
+        return await getJpegSize(file);
+      case 'webp':
+        return await getWebPSize(file);
+      case 'bmp':
+        return await getBmpSize(file);
+      case 'avif':
+        return await getAvifSize(file);
+      default:
+        return null;
+    }
+  }
+
+  function createAbortError() {
+    try {
+      return new DOMException('Scan aborted', 'AbortError');
+    } catch {
+      const err = new Error('Scan aborted');
+      err.name = 'AbortError';
+      return err;
+    }
+  }
+
+  async function walk(dir, path, out, oldMap = null, token = scanToken) {
+    for await (const entry of dir.values()) {
+      if (token !== scanToken) {
+        throw createAbortError();
+      }
+
+      if (entry.kind === 'file') {
+        if (!IMAGE_EXT_RE.test(entry.name)) continue;
+
+        try {
+          const file = await entry.getFile();
+          if (token !== scanToken) throw createAbortError();
+
+          const type = await detectImageType(file);
+          if (token !== scanToken) throw createAbortError();
+
+          if (type === null) {
+            scanSkippedCount++;
+            console.warn('[scan] Пропущен файл:', entry.name, 'неподдерживаемое содержимое');
+            continue;
+          }
+
+          const key = path + entry.name;
+          const old = oldMap ? oldMap.get(key) : null;
+
+          let w = 0, h = 0;
+          let colorInfo = null;
+
+          if (
+            old &&
+            old.size === file.size &&
+            old.lastModified === file.lastModified &&
+            old.type === type
+          ) {
+            w = old.w || 0;
+            h = old.h || 0;
+            colorInfo = old.colorInfo || null;
+          } else {
+            const d = await getImageSize(file, type);
+            if (token !== scanToken) throw createAbortError();
+            if (d) {
+              w = d.w;
+              h = d.h;
+            }
+          }
+
+          if (!colorInfo) {
+            try {
+              colorInfo = await getColorInfo(file, type);
+            } catch (e) {
+              if (token !== scanToken) throw createAbortError();
+              console.warn('[scan] Не удалось получить цветовую информацию:', entry.name, e);
+              colorInfo = fallbackColorInfo();
+            }
+          }
+
+          if (token !== scanToken) throw createAbortError();
+
+          out.push({
+            name: entry.name,
+            path,
+            size: file.size,
+            lastModified: file.lastModified || 0,
+            w,
+            h,
+            type,
+            colorInfo,
+            handle: entry,
+            key,
+            url: undefined,
+            thumbUrl: undefined,
+            thumbLoading: false,
+            thumbToken: 0,
+            thumbCard: null,
+            broken: false,
+            file: undefined
+          });
+
+          scanFoundCount++;
+          updateScanStatus();
+        } catch (e) {
+          if (token !== scanToken) throw createAbortError();
+          if (e && e.name === 'AbortError') throw e;
+          if (e && e.name === 'SecurityError') throw e;
+
+          scanSkippedCount++;
+          console.warn('[scan] Пропущен файл:', entry.name, e);
+        }
+      } else if (entry.kind === 'directory') {
+        try {
+          await walk(entry, path + entry.name + '/', out, oldMap, token);
+        } catch (e) {
+          if (e && (e.name === 'AbortError' || e.name === 'SecurityError')) throw e;
+          /* пропускаем недоступную подпапку */
+        }
+
+        if (token !== scanToken) throw createAbortError();
+      }
+    }
+  }
+
+  /* ── получение File по требованию ── */
+  async function getFile(it) {
+    if (it.file) return it.file;
+    if (!it.handle) throw new Error('no handle');
+    it.file = await it.handle.getFile();
+    return it.file;
+  }
+
+  /* ── управление Blob-URL ── */
+  function releaseFull(it) {
+    if (!it) return;
+
+    if (it.url) {
+      URL.revokeObjectURL(it.url);
+      fullUrls.delete(it.url);
+      it.url = undefined;
+    }
+
+    it.file = undefined;
+  }
+
+  function releaseThumb(it, card) {
+    if (!it) return;
+
+    it.thumbToken = (it.thumbToken || 0) + 1;
+    it.thumbLoading = false;
+
+    if (it.thumbUrl) {
+      URL.revokeObjectURL(it.thumbUrl);
+      thumbUrls.delete(it.thumbUrl);
+      it.thumbUrl = undefined;
+    }
+
+    if (card) {
+      const img = card.querySelector('img');
+      if (img) {
+        img.onload = null;
+        img.onerror = null;
+        img.classList.remove('loaded');
+        img.src = '';
+      }
+    }
+  }
+
+  function releaseItem(it) {
+    releaseThumb(it, null);
+    releaseFull(it);
+    if (activeFullItem === it)
+      activeFullItem = null;
+    it.file = undefined;
+  }
+
+  function revokeAll() {
+    for (const u of fullUrls) URL.revokeObjectURL(u);
+    fullUrls.clear();
+
+    for (const u of thumbUrls) URL.revokeObjectURL(u);
+    thumbUrls.clear();
+
+    for (const it of items) {
+      it.url = undefined;
+      it.thumbUrl = undefined;
+      it.thumbLoading = false;
+      it.thumbToken = (it.thumbToken || 0) + 1;
+      it.file = undefined;
+    }
+
+    thumbQueue.length = 0;
+    activeFullItem = null;
+
+    viewImg.classList.remove('preparing');
+  }
+
+  /* ── генерация уменьшенных миниатюр ── */
+  function canvasToBlob(canvas) {
+    return new Promise(resolve => {
+      canvas.toBlob(blob => {
+        if (blob) resolve(blob);
+        else canvas.toBlob(resolve, 'image/png');
+      }, 'image/webp', 0.8);
+    });
+  }
+
+  function fallbackThumb(file, maxDim) {
+    return new Promise((resolve, reject) => {
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+
+      img.onload = () => {
+        try {
+          const w = img.naturalWidth;
+          const h = img.naturalHeight;
+          if (!w || !h) throw new Error('no size');
+
+          const k = Math.min(1, maxDim / Math.max(w, h));
+          const rw = Math.max(1, Math.round(w * k));
+          const rh = Math.max(1, Math.round(h * k));
+
+          const canvas = document.createElement('canvas');
+          canvas.width = rw;
+          canvas.height = rh;
+          canvas.getContext('2d').drawImage(img, 0, 0, rw, rh);
+
+          canvasToBlob(canvas).then(blob => {
+            URL.revokeObjectURL(url);
+            if (!blob) reject(new Error('toBlob failed'));
+            else resolve(URL.createObjectURL(blob));
+          });
+        } catch (e) {
+          URL.revokeObjectURL(url);
+          reject(e);
+        }
+      };
+
+      img.onerror = () => {
+        URL.revokeObjectURL(url);
+        reject(new Error('image load failed'));
+      };
+
+      img.src = url;
+    });
+  }
+
+  async function makeThumbUrl(it) {
+    let file;
+    try {
+      file = await getFile(it);
+    } catch (e) {
+      it.broken = true;
+      console.warn('[thumb] Не удалось получить File:', it.name, e);
+      throw e;
+    }
+
+    if (!file) throw new Error('no file');
+
+    const maxDim = CONFIG.THUMB_MAX;
+    const w = it.w || 0;
+    const h = it.h || 0;
+
+    let rw = 0;
+    let rh = 0;
+
+    if (w > 0 && h > 0) {
+      const k = Math.min(1, maxDim / Math.max(w, h));
+      rw = Math.max(1, Math.round(w * k));
+      rh = Math.max(1, Math.round(h * k));
+    }
+
+    const draw = async (bitmap) => {
+      const canvas = document.createElement('canvas');
+      canvas.width = bitmap.width;
+      canvas.height = bitmap.height;
+
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(bitmap, 0, 0);
+
+      if (bitmap.close) bitmap.close();
+
+      const blob = await canvasToBlob(canvas);
+      if (!blob) throw new Error('toBlob failed');
+
+      return URL.createObjectURL(blob);
+    };
+
+    try {
+      if (typeof createImageBitmap === 'function') {
+        try {
+          const options = (rw && rh)
+            ? {
+                resizeWidth: rw,
+                resizeHeight: rh,
+                resizeQuality: 'medium'
+              }
+            : undefined;
+
+          const bitmap = await createImageBitmapSafe(file, options);
+          return await draw(bitmap);
+        } catch (e) {
+          return await fallbackThumb(file, maxDim);
+        }
+      }
+
+      return await fallbackThumb(file, maxDim);
+    } finally {
+      it.file = undefined;
+    }
+  }
+
+  function markCardBroken(it, card) {
+    if (!it) return;
+    it.broken = true;
+
+    const el = card || it.thumbCard;
+    if (!el || !el.isConnected) return;
+
+    const img = el.querySelector('img');
+    if (img) img.remove();
+
+    const thumb = el.querySelector('.thumb');
+    if (thumb) thumb.classList.add('broken');
+  }
+
+  function updateCardMeta(it, card) {
+    if (!card || !card.isConnected) return;
+
+    const mt = card.querySelector('.meta');
+    if (mt) {
+      mt.textContent = fmtSize(it.size)
+        + (it.w ? ' · ' + it.w + '×' + it.h : '')
+        + (it.path ? ' · ' + it.path : '');
+    }
+  }
+
+  async function generateThumbnail(it, token) {
+    const wasBrokenBefore = it.broken;
+    try {
+      if (canUseThumbWorker) {
+        try {
+          const res = await generateThumbInWorker(it, token);
+
+          if (it.thumbToken !== token) {
+            if (res.blob) URL.revokeObjectURL(res.blob);
+            return;
+          }
+
+          let sizeUpdated = false;
+          if ((!it.w || !it.h) && res.w > 0 && res.h > 0) {
+            it.w = res.w;
+            it.h = res.h;
+            sizeUpdated = true;
+          }
+
+          let url;
+          try {
+            url = URL.createObjectURL(res.blob);
+          } catch (e) {
+            URL.revokeObjectURL(res.blob);
+            throw e;
+          }
+
+          it.thumbUrl = url;
+          thumbUrls.add(url);
+
+          const card = it.thumbCard;
+          if (card && card.isConnected) {
+            if (sizeUpdated) updateCardMeta(it, card);
+            applyThumb(it, card);
+          }
+
+          if (sizeUpdated && !viewer.hidden && currentKey === it.key) {
+            vDim.textContent = it.w ? it.w + '×' + it.h : '';
+          }
+
+          return;
+        } catch (err) {
+          if (it.thumbToken !== token) return;
+          // fallback below
+        }
+      }
+
+      try {
+        const url = await makeThumbUrl(it);
+
+        if (it.thumbToken !== token) {
+          URL.revokeObjectURL(url);
+          return;
+        }
+
+        it.thumbUrl = url;
+        thumbUrls.add(url);
+
+        const card = it.thumbCard;
+        if (card && card.isConnected) applyThumb(it, card);
+      } catch (fallbackErr) {
+        if (it.thumbToken === token) {
+          markCardBroken(it);
+          if (!wasBrokenBefore) showToast('Не удалось создать миниатюру', 'error');
+        }
+      }
+    } finally {
+      if (it.thumbToken === token) it.thumbLoading = false;
+    }
+  }
+
+  function processThumbQueue() {
+    while (thumbActive < CONFIG.MAX_THUMB_CONCURRENT && thumbQueue.length) {
+      const job = thumbQueue.shift();
+
+      if (job.it.thumbToken !== job.token) continue;
+
+      thumbActive++;
+
+      generateThumbnail(job.it, job.token).finally(() => {
+        thumbActive--;
+        processThumbQueue();
+      });
+    }
+  }
+
+  function ensureThumb(it, card) {
+    if (!it || it.broken) return;
+
+    if (it.thumbUrl) {
+      applyThumb(it, card);
+      return;
+    }
+
+    if (it.thumbLoading) {
+      it.thumbCard = card;
+      return;
+    }
+
+    it.thumbLoading = true;
+    it.thumbCard = card;
+
+    const token = (it.thumbToken = (it.thumbToken || 0) + 1);
+    thumbQueue.push({ it, token });
+    processThumbQueue();
+  }
+
+  function applyThumb(it, card) {
+    const img = card.querySelector('img');
+    if (!img || !it.thumbUrl) return;
+
+    if (img.src !== it.thumbUrl) img.src = it.thumbUrl;
+
+    img.onload = () => img.classList.add('loaded');
+    img.onerror = () => {
+      const wasBroken = it.broken;
+      markCardBroken(it, card);
+      if (!wasBroken) showToast('Не удалось создать миниатюру', 'error');
+    };
+
+    if (img.complete && img.naturalWidth > 0) img.classList.add('loaded');
+  }
+
+  function setControlsEnabled(enabled) {
+    searchInput.disabled = !enabled;
+    sortSelect.disabled = !enabled;
+    refreshBtn.disabled = !enabled;
+    autoChk.disabled = !enabled;
+  }
+
+  function sortItems(list) {
+    const mode = sortSelect.value;
+    const arr = list.slice();
+
+    if (mode === 'date') {
+      arr.sort((a, b) =>
+        (b.lastModified - a.lastModified) ||
+        a.name.localeCompare(b.name, 'ru', { numeric: true, sensitivity: 'base' })
+      );
+    } else if (mode === 'size') {
+      arr.sort((a, b) =>
+        (b.size - a.size) ||
+        a.name.localeCompare(b.name, 'ru', { numeric: true, sensitivity: 'base' })
+      );
+    } else if (mode === 'type') {
+      const typeOrder = {
+        png: 0,
+        jpeg: 1,
+        webp: 2,
+        avif: 3,
+        bmp: 4
+      };
+
+      arr.sort((a, b) => {
+        const ta = typeOrder[a.type] ?? 99;
+        const tb = typeOrder[b.type] ?? 99;
+        if (ta !== tb) return ta - tb;
+        return a.name.localeCompare(b.name, 'ru', { numeric: true, sensitivity: 'base' });
+      });
+    } else {
+      arr.sort((a, b) =>
+        a.name.localeCompare(b.name, 'ru', { numeric: true, sensitivity: 'base' })
+      );
+    }
+
+    return arr;
+  }
+
+  function applySearchSort() {
+    const q = searchInput.value.trim().toLowerCase();
+    const filtered = q
+      ? items.filter(it => it.name.toLowerCase().includes(q))
+      : items.slice();
+
+    displayItems = sortItems(filtered);
+    render();
+    updateSummary();
+    syncViewerToDisplay();
+  }
+
+  /* ── чанковая отрисовка сетки ── */
+  function isNearBottom() {
+    const el = side;
+    if (!el || !el.scrollHeight) return true;
+    return el.scrollTop + el.clientHeight >= el.scrollHeight - 500;
+  }
+
+  function centerCardInSide(card) {
+    if (!card || !card.isConnected) return;
+    if (side.hidden || !side.clientWidth) return;
+
+    const cardRect = card.getBoundingClientRect();
+    const sideRect = side.getBoundingClientRect();
+    if (!cardRect.height || !sideRect.height) return;
+
+    const delta = cardRect.top - sideRect.top - (side.clientHeight - cardRect.height) / 2;
+    if (Math.abs(delta) > 1) {
+      side.scrollTop += delta;
+    }
+  }
+
+  /* После закрытия просмотрщика панель снова занимает всю ширину,
+     число колонок в сетке меняется, поэтому последний просмотренный
+     файл нужно заново центрировать по вертикали.
+     Краевые случаи (файл в начале/конце) обрабатываются самим
+     ограничением scrollTop браузером: сетка упрётся в начало/конец. */
+  function centerLastViewed(key) {
+    if (!key) return;
+
+    const idx = displayItems.findIndex(it => it.key === key);
+    if (idx === -1) return;
+
+    let card = (idx < cards.length) ? cards[idx] : null;
+
+    if (card && card.isConnected) {
+      // getBoundingClientRect() принудительно пересчитывает layout,
+      // поэтому центрируем синхронно — без видимого скачка.
+      centerCardInSide(card);
+      return;
+    }
+
+    // Редкий случай: карточка не в DOM — дорисовываем и центрируем на следующем кадре.
+    ensureCardRendered(idx, 1);
+    requestAnimationFrame(() => {
+      const c = (idx < cards.length) ? cards[idx] : null;
+      if (c && c.isConnected) centerCardInSide(c);
+    });
+  }
+
+  function scheduleRenderChunk() {
+    if (renderScheduled || renderedCount >= displayItems.length) return;
+
+    renderScheduled = true;
+    const gen = renderGeneration;
+
+    requestAnimationFrame(() => {
+      renderScheduled = false;
+      if (gen !== renderGeneration) return;
+
+      if (renderedCount < displayItems.length) {
+        renderChunk(CONFIG.RENDER_CHUNK);
+      }
+    });
+  }
+
+  function ensureRenderedUpTo(index, buffer = 20) {
+    if (index < 0 || index >= displayItems.length) return;
+
+    renderTarget = Math.max(
+      renderTarget,
+      Math.min(displayItems.length, index + buffer + 1)
+    );
+
+    if (renderedCount < renderTarget) scheduleRenderChunk();
+  }
+
+  function createCard(it, i) {
+    const card = document.createElement('figure');
+    card.className = 'card';
+    card.style.setProperty('--i', Math.min(i, 24));
+    cardItems.set(card, it);
+    it.thumbCard = card;
+    card.title = (it.path || '') + it.name;
+    card.addEventListener('click', () => openViewer(i));
+
+    const thumb = document.createElement('div');
+    thumb.className = 'thumb';
+
+    const img = document.createElement('img');
+    img.alt = it.name;
+    img.decoding = 'async';
+    img.draggable = false;
+
+    thumb.appendChild(img);
+
+    if (it.broken) {
+      thumb.classList.add('broken');
+    } else if (it.thumbUrl) {
+      applyThumb(it, card);
+    }
+
+    const cap = document.createElement('figcaption');
+    const nm = document.createElement('span');
+    nm.className = 'name';
+    nm.textContent = it.name;
+
+    const mt = document.createElement('span');
+    mt.className = 'meta';
+    mt.textContent = fmtSize(it.size)
+      + (it.w ? ' · ' + it.w + '×' + it.h : '')
+      + (it.path ? ' · ' + it.path : '');
+
+    cap.append(nm, mt);
+    card.append(thumb, cap);
+
+    if (!it.broken) io.observe(card);
+
+    return card;
+  }
+
+  function renderChunk(count) {
+    if (renderedCount >= displayItems.length) return;
+
+    const end = Math.min(displayItems.length, renderedCount + count);
+    const frag = document.createDocumentFragment();
+
+    for (let i = renderedCount; i < end; i++) {
+      const card = createCard(displayItems[i], i);
+      cards[i] = card;
+      frag.appendChild(card);
+    }
+
+    grid.appendChild(frag);
+    renderedCount = end;
+
+    if (!viewer.hidden && current >= 0 && current < end && cards[current]) {
+      cards[current].classList.add('active');
+      centerCardInSide(cards[current]);
+    }
+
+    if (renderedCount < displayItems.length &&
+        (renderedCount < renderTarget || isNearBottom())) {
+      scheduleRenderChunk();
+    }
+  }
+
+  function renderChunked() {
+    renderGeneration++;
+
+    if (grid.classList.contains('virtual')) {
+      clearVirtualCards(true);
+    }
+
+    const keep = new Set(displayItems.map(it => it.key));
+    for (const it of items) {
+      if (!keep.has(it.key)) releaseThumb(it, null);
+    }
+
+    io.disconnect();
+    grid.innerHTML = '';
+    cards = new Array(displayItems.length).fill(null);
+    renderedCount = 0;
+    renderTarget = 0;
+    renderScheduled = false;
+
+    if (!displayItems.length) {
+      const d = document.createElement('div');
+      d.className = 'empty';
+
+      if (!items.length) {
+        d.innerHTML = '<div class="big">▦</div>В этой папке (и подпапках) нет поддерживаемых изображений.';
+      } else {
+        d.innerHTML = '<div class="big">⌕</div>Ничего не найдено по запросу «' +
+          escapeHtml(searchInput.value) + '».';
+      }
+
+      grid.appendChild(d);
+      return;
+    }
+
+    renderChunk(CONFIG.INITIAL_CHUNK);
+  }
+
+  /* ── виртуализация ── */
+  function getVirtualMetrics() {
+    const cs = getComputedStyle(grid);
+    const padLeft = parseFloat(cs.paddingLeft) || 0;
+    const padRight = parseFloat(cs.paddingRight) || 0;
+    const padTop = parseFloat(cs.paddingTop) || 0;
+    const padBottom = parseFloat(cs.paddingBottom) || 0;
+
+    const clientW = grid.clientWidth;
+    const minCol = window.innerWidth <= 560 ? 140 : 185;
+    const gap = VIRTUAL_GAP;
+
+    let cols;
+    let available;
+
+    if (clientW === 0) {
+      cols = 3;
+      available = minCol * cols + gap * (cols - 1);
+    } else {
+      available = clientW - padLeft - padRight;
+      cols = Math.max(1, Math.floor((available + gap) / (minCol + gap)));
+    }
+
+    let cardWidth = (available - gap * (cols - 1)) / cols;
+    if (!Number.isFinite(cardWidth) || cardWidth <= 0) cardWidth = minCol;
+
+    return {
+      cols,
+      cardWidth,
+      padLeft,
+      padRight,
+      padTop,
+      padBottom,
+      gap
+    };
+  }
+
+  function clearVirtualCards(releaseThumbs) {
+    if (virtualDrawn.size) {
+      for (const idx of Array.from(virtualDrawn)) {
+        const card = cards[idx];
+        if (card) {
+          const it = cardItems.get(card);
+          if (releaseThumbs && it) releaseThumb(it, card);
+          io.unobserve(card);
+          card.remove();
+        }
+      }
+      virtualDrawn.clear();
+    }
+
+    virtualActiveCard = null;
+
+    const spacer = grid.querySelector('.virtual-spacer');
+    if (spacer) spacer.remove();
+
+    grid.classList.remove('virtual');
+  }
+
+  function removeVirtualCard(idx) {
+    const card = cards[idx];
+    if (!card) {
+      virtualDrawn.delete(idx);
+      return;
+    }
+
+    const it = cardItems.get(card);
+    io.unobserve(card);
+    if (it) releaseThumb(it, card);
+
+    if (virtualActiveCard === card) virtualActiveCard = null;
+
+    card.remove();
+    cards[idx] = null;
+    virtualDrawn.delete(idx);
+  }
+
+  function renderVirtual() {
+    renderGeneration++;
+
+    const keep = new Set(displayItems.map(it => it.key));
+    for (const it of items) {
+      if (!keep.has(it.key)) releaseThumb(it, null);
+    }
+
+    if (grid.classList.contains('virtual')) {
+      clearVirtualCards(true);
+    }
+
+    io.disconnect();
+    grid.innerHTML = '';
+    cards = new Array(displayItems.length).fill(null);
+    renderedCount = 0;
+    renderTarget = 0;
+    renderScheduled = false;
+
+    if (!displayItems.length) {
+      const d = document.createElement('div');
+      d.className = 'empty';
+
+      if (!items.length) {
+        d.innerHTML = '<div class="big">▦</div>В этой папке (и подпапках) нет поддерживаемых изображений.';
+      } else {
+        d.innerHTML = '<div class="big">⌕</div>Ничего не найдено по запросу «' +
+          escapeHtml(searchInput.value) + '».';
+      }
+
+      grid.appendChild(d);
+      return;
+    }
+
+    grid.classList.add('virtual');
+    renderVirtualRange(false);
+  }
+
+  function renderVirtualRange(scrollCurrent = false) {
+    if (displayItems.length <= VIRTUAL_THRESHOLD || !grid.classList.contains('virtual')) return;
+
+    const total = displayItems.length;
+    const m = getVirtualMetrics();
+    const rowPitch = virtualRowHeight + m.gap;
+    const totalRows = Math.ceil(total / m.cols);
+
+    let spacer = grid.querySelector('.virtual-spacer');
+    if (!spacer) {
+      spacer = document.createElement('div');
+      spacer.className = 'virtual-spacer';
+      grid.appendChild(spacer);
+    }
+
+    spacer.style.height = (totalRows * rowPitch) + 'px';
+
+    let scrollTop = side.scrollTop;
+    const viewH = side.clientHeight || 0;
+
+    if (scrollCurrent && !viewer.hidden && current >= 0 && current < total) {
+      const curRow = Math.floor(current / m.cols);
+      const curTop = m.padTop + curRow * rowPitch;
+      const firstRowNow = Math.floor((scrollTop - m.padTop) / rowPitch);
+      const lastRowNow = Math.ceil((scrollTop - m.padTop + viewH) / rowPitch);
+
+      if (curRow < firstRowNow - 3 || curRow > lastRowNow + 3) {
+        scrollTop = Math.max(0, curTop - viewH / 2);
+        side.scrollTop = scrollTop;
+      }
+    }
+
+    const buffer = 3;
+    let firstRow = Math.floor((scrollTop - m.padTop) / rowPitch) - buffer;
+    let lastRow = Math.ceil((scrollTop - m.padTop + viewH) / rowPitch) + buffer;
+
+    firstRow = Math.max(0, firstRow);
+    lastRow = Math.min(totalRows, lastRow);
+    if (firstRow > lastRow) firstRow = lastRow;
+
+    const start = firstRow * m.cols;
+    const end = Math.min(total, lastRow * m.cols);
+
+    for (const idx of Array.from(virtualDrawn)) {
+      if (idx < start || idx >= end) removeVirtualCard(idx);
+    }
+
+    for (let i = start; i < end; i++) {
+      if (!cards[i]) {
+        const card = createCard(displayItems[i], i);
+        cards[i] = card;
+
+        const row = Math.floor(i / m.cols);
+        const col = i % m.cols;
+
+        card.style.left = (m.padLeft + col * (m.cardWidth + m.gap)) + 'px';
+        card.style.top = (m.padTop + row * rowPitch) + 'px';
+        card.style.width = m.cardWidth + 'px';
+
+        grid.appendChild(card);
+        virtualDrawn.add(i);
+      }
+    }
+
+    if (!viewer.hidden && current >= start && current < end) {
+      const card = cards[current];
+      if (card) {
+        if (virtualActiveCard && virtualActiveCard !== card) {
+          virtualActiveCard.classList.remove('active');
+        }
+        card.classList.add('active');
+        virtualActiveCard = card;
+
+        if (scrollCurrent) {
+          centerCardInSide(card);
+        }
+      }
+    } else if (virtualActiveCard) {
+      virtualActiveCard.classList.remove('active');
+      virtualActiveCard = null;
+    }
+
+    if (virtualDrawn.size) {
+      const sampleIdx = start < cards.length ? start : end - 1;
+      const sampleCard = cards[sampleIdx];
+
+      if (sampleCard) {
+        const h = sampleCard.offsetHeight;
+        if (h > 0 && Math.abs(h - virtualRowHeight) > 1) {
+          virtualRowHeight = h;
+          const newRowPitch = virtualRowHeight + m.gap;
+          spacer.style.height = (totalRows * newRowPitch) + 'px';
+
+          for (const idx of virtualDrawn) {
+            const card = cards[idx];
+            if (!card) continue;
+            const row = Math.floor(idx / m.cols);
+            card.style.top = (m.padTop + row * newRowPitch) + 'px';
+          }
+        }
+      }
+    }
+  }
+
+  function ensureCardRendered(index, buffer = 20) {
+    if (index < 0 || index >= displayItems.length) return;
+
+    if (displayItems.length > VIRTUAL_THRESHOLD) {
+      renderVirtualRange(true);
+    } else {
+      ensureRenderedUpTo(index, buffer);
+    }
+  }
+
+  function render() {
+    if (displayItems.length > VIRTUAL_THRESHOLD) {
+      renderVirtual();
+    } else {
+      renderChunked();
+    }
+  }
+
+  function updateSummary() {
+    const total = items.length;
+    const shown = displayItems.length;
+    const totalSize = items.reduce((s, it) => s + it.size, 0);
+
+    const totalText = '<b>' + total + '</b> ' +
+      plural(total, ['изображение', 'изображения', 'изображений']);
+
+    const shownText = shown === total
+      ? 'Найдено ' + totalText
+      : 'Показано <b>' + shown + '</b> из ' + totalText;
+
+    summary.innerHTML = shownText + ' · суммарно <b>' + fmtSize(totalSize) + '</b>';
+    stats.innerHTML = '<b>' + total + '</b> ' +
+      plural(total, ['файл', 'файла', 'файлов']) + ' · ' + fmtSize(totalSize);
+  }
+
+  function syncViewerToDisplay() {
+    if (viewer.hidden) {
+      current = -1;
+      currentKey = null;
+      return;
+    }
+
+    if (!currentKey) {
+      closeViewer();
+      return;
+    }
+
+    const idx = displayItems.findIndex(it => it.key === currentKey);
+    if (idx === -1) {
+      closeViewer();
+      return;
+    }
+
+    current = idx;
+    const it = displayItems[idx];
+
+    vCount.textContent = (current + 1) + ' / ' + displayItems.length;
+    vName.textContent = it.name + (it.path ? ' · ' + it.path : '');
+    vDim.textContent = it.w ? it.w + '×' + it.h : '';
+
+    if (displayItems.length > VIRTUAL_THRESHOLD) {
+      ensureCardRendered(current, 20);
+      return;
+    }
+
+    if (cards[current]) {
+      cards.forEach((c, i) => {
+        if (c) c.classList.toggle('active', i === current);
+      });
+      centerCardInSide(cards[current]);
+    } else {
+      ensureRenderedUpTo(current, 20);
+    }
+  }
+
+  /* ── зум / пан ── */
+  function stopPan() {
+    panning = false;
+    panPointerId = null;
+    stage.classList.remove('grabbing');
+  }
+
+  function clampOffset() {
+    const rect = stage.getBoundingClientRect();
+    if (!rect.width || !rect.height) return;
+
+    const w = viewImg.clientWidth * scale;
+    const h = viewImg.clientHeight * scale;
+
+    const maxX = Math.max(0, (w - rect.width) / 2);
+    const maxY = Math.max(0, (h - rect.height) / 2);
+
+    tx = Math.min(maxX, Math.max(-maxX, tx));
+    ty = Math.min(maxY, Math.max(-maxY, ty));
+  }
+
+  function updateZoomLabel() {
+    if (viewer.hidden) {
+      vZoom.textContent = '';
+      return;
+    }
+
+    const natural = viewImg.naturalWidth;
+    if (!natural) {
+      vZoom.textContent = '';
+      return;
+    }
+
+    let displayed = viewImg.clientWidth * scale;
+    if (!displayed) displayed = viewImg.getBoundingClientRect().width;
+
+    if (!displayed) {
+      vZoom.textContent = '';
+      return;
+    }
+
+    const pct = displayed / natural * 100;
+    if (!Number.isFinite(pct)) {
+      vZoom.textContent = '';
+      return;
+    }
+
+    const rounded = Math.round(pct);
+    vZoom.textContent = (rounded >= 1 ? rounded : 1) + '%';
+  }
+
+  function measureStage() {
+    const cs = getComputedStyle(stage);
+    const w = stage.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+    const h = stage.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
+    stageContentSize = {
+      w: Math.max(0, w),
+      h: Math.max(0, h)
+    };
+  }
+
+  function fitSizeFor(nw, nh) {
+    if (!nw || !nh) return null;
+
+    if (!stageContentSize.w || !stageContentSize.h) {
+      measureStage();
+    }
+
+    const w = stageContentSize.w;
+    const h = stageContentSize.h;
+    if (!w || !h) return null;
+
+    const k = Math.min(w / nw, h / nh, 1);
+
+    return {
+      w: Math.max(1, Math.floor(nw * k)),
+      h: Math.max(1, Math.floor(nh * k))
+    };
+  }
+
+  function applyFittedSize(nw, nh) {
+    const s = fitSizeFor(nw, nh);
+    if (!s) return false;
+
+    viewImg.style.width = s.w + 'px';
+    viewImg.style.height = s.h + 'px';
+    viewImg.style.maxWidth = 'none';
+    viewImg.style.maxHeight = 'none';
+    return true;
+  }
+
+  function fitImage() {
+    const nw = viewImg.naturalWidth;
+    const nh = viewImg.naturalHeight;
+    if (!nw || !nh) return;
+
+    applyFittedSize(nw, nh);
+  }
+
+  function applyTransform(animate = false) {
+    clampOffset();
+
+    viewImg.classList.toggle('anim', animate);
+    if (scale === 1 && tx === 0 && ty === 0) {
+      viewImg.style.transform = '';
+    } else {
+      viewImg.style.transform = `translate(${tx}px, ${ty}px) scale(${scale})`;
+    }
+
+    stage.classList.toggle('zoomed', scale > 1.01);
+    updateZoomLabel();
+
+    if (animate) {
+      setTimeout(() => viewImg.classList.remove('anim'), 230);
+    }
+  }
+
+  function resetZoom(animate = false) {
+    stopPan();
+    scale = 1;
+    tx = 0;
+    ty = 0;
+    applyTransform(animate);
+  }
+
+  function zoomAtPoint(clientX, clientY, newScale, animate = false) {
+    stopPan();
+
+    const rect = stage.getBoundingClientRect();
+    if (!rect.width || !rect.height) return;
+
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+
+    const mx = clientX - cx;
+    const my = clientY - cy;
+
+    const s0 = scale;
+    const s1 = Math.min(CONFIG.MAX_ZOOM, Math.max(1, newScale));
+
+    if (s1 === s0) return;
+
+    tx = mx * (1 - s1 / s0) + tx * (s1 / s0);
+    ty = my * (1 - s1 / s0) + ty * (s1 / s0);
+    scale = s1;
+
+    if (scale <= 1.001) {
+      scale = 1;
+      tx = 0;
+      ty = 0;
+    }
+
+    applyTransform(animate);
+  }
+
+  function zoomCenter(factor, animate = false) {
+    const rect = stage.getBoundingClientRect();
+    zoomAtPoint(rect.left + rect.width / 2, rect.top + rect.height / 2, scale * factor, animate);
+  }
+
+  /* ── fullscreen ── */
+  function isFullscreen() {
+    return document.fullscreenElement === viewer;
+  }
+
+  function requestFullscreen() {
+    if (isFullscreen()) return;
+    if (!viewer.requestFullscreen) return;
+
+    resetZoom(false);
+
+    const p = viewer.requestFullscreen();
+    if (p && p.catch) {
+      p.catch(err => {
+        console.error(err);
+        showToast('Браузер не разрешил полный экран', 'error');
+      });
+    }
+  }
+
+  function exitFullscreen() {
+    if (!document.exitFullscreen) return;
+    const p = document.exitFullscreen();
+    if (p && p.catch) p.catch(err => console.error(err));
+  }
+
+  function toggleFullscreen() {
+    if (isFullscreen()) {
+      exitFullscreen();
+    } else if (viewer.hidden) {
+      if (!items.length) return;
+
+      if (!displayItems.length) {
+        searchInput.value = '';
+        applySearchSort();
+      }
+
+      if (!displayItems.length) return;
+
+      openViewer(0);
+      requestFullscreen();
+    } else {
+      requestFullscreen();
+    }
+  }
+
+  function showUI() {
+    if (!isFullscreen()) return;
+
+    viewer.classList.remove('ui-hidden');
+    clearTimeout(uiTimer);
+    uiTimer = setTimeout(() => {
+      if (isFullscreen()) viewer.classList.add('ui-hidden');
+    }, 2000);
+  }
+
+  function clearViewImg() {
+    viewImg.onload = null;
+    viewImg.onerror = null;
+    viewImg.src = '';
+    viewImg.classList.remove('preparing');
+  }
+
+  function handleViewError(it) {
+    const wasBroken = it.broken;
+    markCardBroken(it);
+    releaseFull(it);
+    if (activeFullItem === it) activeFullItem = null;
+
+    viewImg.style.display = 'none';
+    viewImg.classList.remove('preparing');
+    stageError.hidden = false;
+    viewImg.classList.add('loaded');
+    applyTransform(false);
+
+    if (!wasBroken) showToast('Не удалось загрузить изображение', 'error');
+  }
+
+  /* ── просмотр ── */
+  async function showImage() {
+    const it = displayItems[current];
+    if (!it) {
+      closeViewer();
+      return;
+    }
+
+    if (infoOpen) closeInfo();
+
+    currentKey = it.key;
+    resetZoom(false);
+
+    stageError.hidden = true;
+    viewImg.style.display = '';
+
+    // ВАЖНО:
+    // Не сбрасываем width/height/maxWidth/maxHeight до момента,
+    // пока мы не подготовили box под новое изображение.
+    // Иначе большой PNG может на кадр отрисоваться в натуральном размере.
+
+    viewImg.alt = it.name;
+    vCount.textContent = (current + 1) + ' / ' + displayItems.length;
+    vName.textContent = it.name + (it.path ? ' · ' + it.path : '');
+    vDim.textContent = it.w ? it.w + '×' + it.h : '';
+
+    const prevFull = activeFullItem;
+    activeFullItem = it;
+
+    if (displayItems.length > VIRTUAL_THRESHOLD) {
+      ensureCardRendered(current, 20);
+    } else if (cards[current]) {
+      cards.forEach((c, i) => {
+        if (c) c.classList.toggle('active', i === current);
+      });
+      centerCardInSide(cards[current]);
+    } else {
+      ensureRenderedUpTo(current, 20);
+    }
+
+    if (isFullscreen()) showUI();
+
+    if (it.broken) {
+      markCardBroken(it);
+      if (prevFull && prevFull !== it) releaseFull(prevFull);
+      clearViewImg();
+      viewImg.style.display = 'none';
+      stageError.hidden = false;
+      viewImg.classList.add('loaded');
+      applyTransform(false);
+      return;
+    }
+
+    const token = ++viewToken;
+
+    if (!it.url) {
+      try {
+        const file = await getFile(it);
+
+        if (token !== viewToken || viewer.hidden) {
+          if (prevFull && prevFull !== it && prevFull !== activeFullItem) releaseFull(prevFull);
+          if (activeFullItem !== it) it.file = undefined;
+          return;
+        }
+
+        it.url = URL.createObjectURL(file);
+        fullUrls.add(it.url);
+        it.file = undefined;
+      } catch (e) {
+        if (token !== viewToken || viewer.hidden) {
+          if (prevFull && prevFull !== it && prevFull !== activeFullItem) releaseFull(prevFull);
+          if (activeFullItem !== it) it.file = undefined;
+          return;
+        }
+
+        console.warn('[viewer] Не удалось получить File:', it.name, e);
+        if (prevFull && prevFull !== it) releaseFull(prevFull);
+        handleViewError(it);
+        return;
+      }
+    }
+
+    const sameSrc = viewImg.src === it.url;
+
+    // Если это уже тот же src и изображение уже загружено — просто показываем.
+    if (sameSrc && viewImg.complete && viewImg.naturalWidth > 0) {
+      if (prevFull && prevFull !== it) releaseFull(prevFull);
+      fitImage();
+      viewImg.classList.remove('preparing');
+      viewImg.classList.add('loaded');
+      applyTransform(false);
+      return;
+    }
+
+    // Подготавливаем box заранее по известным размерам PNG.
+    // Это убирает «скачок», когда браузер на мгновение показывает
+    // изображение до применения fitImage().
+    if (it.w && it.h) {
+      applyFittedSize(it.w, it.h);
+    } else {
+      viewImg.style.width = '';
+      viewImg.style.height = '';
+      viewImg.style.maxWidth = '';
+      viewImg.style.maxHeight = '';
+    }
+
+    // Пока новое изображение не готово — не показываем его.
+    viewImg.classList.remove('loaded');
+    viewImg.classList.add('preparing');
+
+    viewImg.onload = () => {
+      if (token !== viewToken) return;
+
+      if (viewImg.naturalWidth === 0 || viewImg.naturalHeight === 0) {
+        handleViewError(it);
+        return;
+      }
+
+      // Если размеры из PNG-заголовка не совпали с реальными —
+      // пересчитываем точно по naturalWidth/naturalHeight.
+      fitImage();
+
+      viewImg.classList.remove('preparing');
+      viewImg.classList.add('loaded');
+      applyTransform(true);
+
+      setTimeout(() => viewImg.classList.remove('anim'), 260);
+    };
+
+    viewImg.onerror = () => {
+      if (token !== viewToken) return;
+      handleViewError(it);
+    };
+
+    if (!sameSrc) {
+      viewImg.src = it.url;
+    } else if (viewImg.complete) {
+      viewImg.src = '';
+      viewImg.src = it.url;
+    }
+
+    if (prevFull && prevFull !== it) releaseFull(prevFull);
+
+    // На случай, если браузер уже считает изображение готовым
+    // и onload может не сработать.
+    requestAnimationFrame(() => {
+      if (token !== viewToken) return;
+
+      if (viewImg.complete && viewImg.naturalWidth > 0) {
+        fitImage();
+        viewImg.classList.remove('preparing');
+        viewImg.classList.add('loaded');
+        applyTransform(false);
+      }
+    });
+  }
+
+  function showImageSafe() {
+    return showImage().catch(err => {
+      console.error('[viewer] showImage:', err);
+    });
+  }
+
+  function openViewer(i) {
+    if (!displayItems.length) return;
+
+    current = i;
+    currentKey = displayItems[i].key;
+    viewer.hidden = false;
+    document.body.classList.add('viewing');
+
+    ensureCardRendered(i, 20);
+    showImageSafe();
+  }
+
+  function closeViewer() {
+    closeInfo();
+
+    if (isFullscreen()) exitFullscreen();
+
+    // Запоминаем последний просмотренный файл до сброса состояния,
+    // чтобы после закрытия центрировать его в сетке.
+    const closeKey = currentKey;
+
+    viewer.hidden = true;
+    document.body.classList.remove('viewing');
+
+    if (grid.classList.contains('virtual')) {
+      if (virtualActiveCard) virtualActiveCard.classList.remove('active');
+      virtualActiveCard = null;
+    } else {
+      cards.forEach(c => {
+        if (c) c.classList.remove('active');
+      });
+    }
+
+    current = -1;
+    currentKey = null;
+
+    stopPan();
+    resetZoom(false);
+    viewer.classList.remove('ui-hidden');
+    clearTimeout(uiTimer);
+
+    clearViewImg();
+    releaseFull(activeFullItem);
+    activeFullItem = null;
+
+    viewImg.style.display = '';
+    viewImg.classList.remove('preparing');
+    stageError.hidden = true;
+
+    viewToken++;
+
+    // Панель снова занимает всю ширину, сетка перестроилась —
+    // центрируем последний просмотренный файл по вертикали.
+    if (closeKey) centerLastViewed(closeKey);
+  }
+
+  function step(d) {
+    if (!displayItems.length) return;
+
+    current = (current + d + displayItems.length) % displayItems.length;
+    currentKey = displayItems[current].key;
+
+    ensureCardRendered(current, 20);
+    showImageSafe();
+  }
+
+  /* ── IndexedDB ── */
+  let dbPromise = null;
+
+  function idbOpen() {
+    if (dbPromise) return dbPromise;
+
+    dbPromise = new Promise((resolve, reject) => {
+      if (!('indexedDB' in window)) {
+        reject(new Error('IndexedDB not available'));
+        return;
+      }
+
+      const req = indexedDB.open('png-viewer', 1);
+
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains('handles')) {
+          db.createObjectStore('handles');
+        }
+      };
+
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    }).catch(err => {
+      dbPromise = null;
+      throw err;
+    });
+
+    return dbPromise;
+  }
+
+  async function idbGet(key) {
+    const db = await idbOpen();
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction('handles', 'readonly');
+      const r = tx.objectStore('handles').get(key);
+      r.onsuccess = () => resolve(r.result);
+      r.onerror = () => reject(r.error);
+    });
+  }
+
+  async function idbSet(key, value) {
+    const db = await idbOpen();
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction('handles', 'readwrite');
+      tx.objectStore('handles').put(value, key);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  }
+
+  async function idbDelete(key) {
+    const db = await idbOpen();
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction('handles', 'readwrite');
+      tx.objectStore('handles').delete(key);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  }
+
+  async function idbClear() {
+    const db = await idbOpen();
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction('handles', 'readwrite');
+      tx.objectStore('handles').clear();
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  }
+
+  /* ── permission / restore ── */
+  async function ensurePermission(handle) {
+    const opts = { mode: 'read' };
+    let state = 'prompt';
+
+    try {
+      if (handle.queryPermission) {
+        state = await handle.queryPermission(opts);
+      }
+    } catch {
+      state = 'prompt';
+    }
+
+    if (state !== 'granted') {
+      try {
+        if (handle.requestPermission) {
+          state = await handle.requestPermission(opts);
+        }
+      } catch {
+        state = 'denied';
+      }
+    }
+
+    return state === 'granted';
+  }
+
+  function showRestorePrompt() {
+    placeholder.hidden = false;
+    gallery.hidden = true;
+    chip.hidden = true;
+    pickBtn2.hidden = true;
+    forgetBtn.hidden = true;
+    clearCacheBtn.hidden = true;
+    warn.hidden = true;
+    restoreWarn.hidden = false;
+    restoreBtn.hidden = false;
+    pickBtn.disabled = false;
+    pickBtn.style.opacity = '';
+    setControlsEnabled(false);
+  }
+
+  async function restoreSavedFolder() {
+    try {
+      const handle = await idbGet('dirHandle');
+      if (!handle) return false;
+
+      dirHandle = handle;
+      const ok = await ensurePermission(handle);
+
+      if (!ok) {
+        showRestorePrompt();
+        return false;
+      }
+
+      await loadFolder();
+      return true;
+    } catch (e) {
+      console.error(e);
+      showRestorePrompt();
+      return false;
+    }
+  }
+
+  /* ── auto refresh ── */
+  function computeAutoInterval(count) {
+    if (count <= 0) return 1000;
+
+    // Чем больше файлов, тем реже пересканирование.
+    // Минимум 500ms, максимум 10000ms.
+    const ms = CONFIG.AUTO_REFRESH_MIN + Math.sqrt(count) * 120;
+    return Math.min(CONFIG.AUTO_REFRESH_MAX, Math.max(CONFIG.AUTO_REFRESH_MIN, Math.round(ms / 100) * 100));
+  }
+
+  function stopAuto() {
+    if (autoTimer) clearTimeout(autoTimer);
+    autoTimer = null;
+  }
+
+  function scheduleAuto() {
+    stopAuto();
+
+    if (!autoEnabled || !dirHandle || scanning) return;
+
+    const interval = computeAutoInterval(items.length);
+
+    autoTimer = setTimeout(async () => {
+      if (!autoEnabled || !dirHandle) return;
+
+      if (document.hidden || scanning) {
+        scheduleAuto();
+        return;
+      }
+
+      await refreshFolder(true);
+
+      if (autoEnabled) {
+        scheduleAuto();
+      }
+    }, interval);
+  }
+
+  function setAutoEnabled(enabled) {
+    autoEnabled = !!enabled;
+    autoChk.checked = autoEnabled;
+
+    try {
+      localStorage.setItem('pngviewer.autoRefresh', autoEnabled ? '1' : '0');
+    } catch {}
+
+    if (autoEnabled) {
+      scheduleAuto();
+    } else {
+      stopAuto();
+    }
+  }
+
+  /* ── ошибки сканирования ── */
+  async function handleScanError(err) {
+    topbar.classList.remove('scanning');
+    status.classList.remove('done');
+    stats.hidden = true;
+    summary.textContent = '';
+
+    if (!viewer.hidden) closeViewer();
+
+    revokeAll();
+
+    items = [];
+    displayItems = [];
+    cards = [];
+    current = -1;
+    currentKey = null;
+    renderedCount = 0;
+    renderTarget = 0;
+    renderScheduled = false;
+
+    virtualDrawn.clear();
+    virtualActiveCard = null;
+    grid.classList.remove('virtual');
+    grid.innerHTML = '';
+    viewImg.classList.remove('preparing');
+    viewImg.style.display = '';
+    stageError.hidden = true;
+
+    forgetBtn.hidden = true;
+    clearCacheBtn.hidden = true;
+
+    const accessLost = !!(err && (err.name === 'SecurityError' || err.name === 'NotFoundError'));
+
+    if (accessLost) {
+      showToast('Доступ к папке потерян', 'error');
+      dirHandle = null;
+      stopAuto();
+      setAutoEnabled(false);
+      statusText.textContent = 'ошибка доступа';
+
+      let hasSaved = false;
+      try {
+        hasSaved = !!(await idbGet('dirHandle'));
+      } catch {
+        hasSaved = false;
+      }
+
+      if (hasSaved) {
+        showRestorePrompt();
+      } else {
+        placeholder.hidden = false;
+        gallery.hidden = true;
+        chip.hidden = true;
+        pickBtn2.hidden = true;
+        restoreWarn.hidden = true;
+        restoreBtn.hidden = true;
+        warn.hidden = false;
+        warn.textContent = 'Доступ к папке потерян.';
+        pickBtn.disabled = false;
+        pickBtn.style.opacity = '';
+        setControlsEnabled(false);
+      }
+
+      return;
+    }
+
+    showToast('Не удалось получить доступ к папке', 'error');
+    statusText.textContent = 'ошибка доступа';
+
+    if (dirHandle) {
+      placeholder.hidden = true;
+      gallery.hidden = false;
+      chip.hidden = false;
+      pickBtn2.hidden = false;
+      folderName.textContent = dirHandle.name;
+
+      grid.innerHTML =
+        '<div class="empty">' +
+        '<div class="big">⚠</div>' +
+        'Не удалось получить доступ к папке.' +
+        '</div>';
+
+      setControlsEnabled(true);
+      scheduleAuto();
+    } else {
+      placeholder.hidden = false;
+      gallery.hidden = true;
+      chip.hidden = true;
+      pickBtn2.hidden = true;
+      restoreWarn.hidden = true;
+      restoreBtn.hidden = true;
+      warn.hidden = false;
+      warn.textContent = 'Не удалось получить доступ к папке.';
+      pickBtn.disabled = false;
+      pickBtn.style.opacity = '';
+      setControlsEnabled(false);
+    }
+  }
+
+  /* ── полная загрузка папки ── */
+  async function loadFolder() {
+    if (!dirHandle) return;
+
+    scanning = true;
+
+    closeViewer();
+    revokeAll();
+    io.disconnect();
+
+    items = [];
+    displayItems = [];
+    cards = [];
+    grid.innerHTML = '';
+    renderedCount = 0;
+    renderTarget = 0;
+    renderScheduled = false;
+
+    virtualDrawn.clear();
+    virtualActiveCard = null;
+    grid.classList.remove('virtual');
+
+    placeholder.hidden = true;
+    restoreWarn.hidden = true;
+    restoreBtn.hidden = true;
+
+    gallery.hidden = false;
+    chip.hidden = false;
+    pickBtn2.hidden = false;
+    folderName.textContent = dirHandle.name;
+
+    forgetBtn.hidden = true;
+    clearCacheBtn.hidden = true;
+
+    stats.hidden = true;
+    summary.textContent = '';
+    status.classList.remove('done');
+    statusText.textContent = 'сканирование…';
+    topbar.classList.add('scanning');
+    setControlsEnabled(true);
+
+    const token = ++scanToken;
+
+    scanStartedAt = performance.now();
+    scanFoundCount = 0;
+    scanSkippedCount = 0;
+    lastScanStatusUpdate = 0;
+    updateScanStatus(true);
+
+    const found = [];
+    let err = null;
+
+    try {
+      await walk(dirHandle, '', found, null, token);
+    } catch (e) {
+      err = e;
+    }
+
+    if (token !== scanToken) return;
+
+    scanning = false;
+    topbar.classList.remove('scanning');
+
+    if (err) {
+      await handleScanError(err);
+      return;
+    }
+
+    found.sort((a, b) =>
+      a.name.localeCompare(b.name, 'ru', { numeric: true, sensitivity: 'base' })
+    );
+
+    items = found;
+    displayItems = items.slice();
+
+    status.classList.add('done');
+    finalizeScanStatus();
+    stats.hidden = false;
+    forgetBtn.hidden = false;
+    clearCacheBtn.hidden = false;
+
+    applySearchSort();
+    updateSummary();
+    scheduleAuto();
+  }
+
+  /* ── обновление без полной перезагрузки UI ── */
+  async function refreshFolder(isAuto = false) {
+    if (!dirHandle || scanning) return;
+
+    scanning = true;
+    topbar.classList.add('scanning');
+    status.classList.remove('done');
+    statusText.textContent = isAuto ? 'автообновление…' : 'обновление…';
+
+    const token = ++scanToken;
+
+    scanStartedAt = performance.now();
+    scanFoundCount = 0;
+    scanSkippedCount = 0;
+    lastScanStatusUpdate = 0;
+    updateScanStatus(true);
+
+    const oldMap = new Map(items.map(it => [it.key, it]));
+    const found = [];
+    let err = null;
+
+    try {
+      await walk(dirHandle, '', found, oldMap, token);
+    } catch (e) {
+      err = e;
+    }
+
+    if (token !== scanToken) return;
+
+    scanning = false;
+    topbar.classList.remove('scanning');
+
+    if (err) {
+      await handleScanError(err);
+      return;
+    }
+
+    found.sort((a, b) =>
+      a.name.localeCompare(b.name, 'ru', { numeric: true, sensitivity: 'base' })
+    );
+
+    const newMap = new Map(found.map(it => [it.key, it]));
+
+    let listChanged = false;
+    let currentChanged = false;
+
+    if (!viewer.hidden && currentKey) {
+      const old = oldMap.get(currentKey);
+      const neu = newMap.get(currentKey);
+
+      if (neu && old && (
+        old.size !== neu.size ||
+        old.lastModified !== neu.lastModified ||
+        old.w !== neu.w ||
+        old.h !== neu.h ||
+        old.type !== neu.type
+      )) {
+        currentChanged = true;
+      }
+    }
+
+    // Удалённые файлы
+    for (const it of items) {
+      if (!newMap.has(it.key)) {
+        listChanged = true;
+
+        if (!viewer.hidden && it.key === currentKey) {
+          clearViewImg();
+          closeViewer();
+        }
+
+        releaseItem(it);
+      }
+    }
+
+    // Новые / изменённые файлы
+    const newItems = found.map(it => {
+      const old = oldMap.get(it.key);
+
+      if (!old) {
+        listChanged = true;
+        return it;
+      }
+
+      const changed =
+        old.size !== it.size ||
+        old.lastModified !== it.lastModified ||
+        old.w !== it.w ||
+        old.h !== it.h ||
+        old.type !== it.type;
+
+      if (changed) {
+        listChanged = true;
+        releaseItem(old);
+        return it;
+      }
+
+      // Неизменённый файл — сохраняем объект, чтобы не терять текущие URL/миниатюры.
+      old.handle = it.handle;
+      old.size = it.size;
+      old.lastModified = it.lastModified;
+      old.w = it.w;
+      old.h = it.h;
+      old.type = it.type;
+      old.colorInfo = it.colorInfo;
+      old.file = undefined;
+      return old;
+    });
+
+    items = newItems;
+
+    if (listChanged) {
+      applySearchSort();
+    }
+
+    updateSummary();
+
+    status.classList.add('done');
+    finalizeScanStatus();
+
+    if (dirHandle) {
+      forgetBtn.hidden = false;
+      clearCacheBtn.hidden = false;
+    }
+
+    if (currentChanged && !viewer.hidden && currentKey) {
+      const idx = displayItems.findIndex(it => it.key === currentKey);
+      if (idx !== -1) {
+        current = idx;
+        showImageSafe();
+      }
+    }
+
+    scheduleAuto();
+  }
+
+  async function pickFolder() {
+    try {
+      dirHandle = await window.showDirectoryPicker({ mode: 'read' });
+    } catch (e) {
+      if (e.name === 'AbortError') return;   // пользователь отменил
+      console.error(e);
+      showToast('Не удалось получить доступ к папке', 'error');
+      return;
+    }
+
+    try {
+      await idbSet('dirHandle', dirHandle);
+    } catch {}
+
+    searchInput.value = '';
+    sortSelect.value = getSavedSort();
+
+    await loadFolder();
+  }
+
+  async function forgetFolder() {
+    if (scanning) return;
+
+    try {
+      await idbDelete('dirHandle');
+    } catch (e) {
+      console.warn(e);
+    }
+
+    dirHandle = null;
+    stopAuto();
+    setAutoEnabled(false);
+
+    closeViewer();
+    revokeAll();
+
+    items = [];
+    displayItems = [];
+    cards = [];
+    current = -1;
+    currentKey = null;
+    renderedCount = 0;
+    renderTarget = 0;
+    renderScheduled = false;
+    virtualDrawn.clear();
+    virtualActiveCard = null;
+    grid.classList.remove('virtual');
+    grid.innerHTML = '';
+    io.disconnect();
+
+    topbar.classList.remove('scanning');
+    status.classList.remove('done');
+    statusText.textContent = '';
+    stats.hidden = true;
+    summary.textContent = '';
+
+    searchInput.value = '';
+
+    placeholder.hidden = false;
+    gallery.hidden = true;
+    chip.hidden = true;
+    pickBtn2.hidden = true;
+    forgetBtn.hidden = true;
+    clearCacheBtn.hidden = true;
+    restoreWarn.hidden = true;
+    restoreBtn.hidden = true;
+    warn.hidden = true;
+
+    pickBtn.disabled = false;
+    pickBtn.style.opacity = '';
+    setControlsEnabled(false);
+
+    showToast('Папка забыта', 'success');
+  }
+
+  async function clearAppCache() {
+    if (scanning) return;
+
+    const ok = confirm('Удалить все локальные данные приложения?');
+    if (!ok) return;
+
+    try {
+      await idbClear();
+    } catch (e) {
+      console.warn(e);
+    }
+
+    try {
+      Object.keys(localStorage)
+        .filter(k => k.startsWith('pngviewer.'))
+        .forEach(k => localStorage.removeItem(k));
+    } catch (e) {
+      console.warn(e);
+    }
+
+    dirHandle = null;
+    stopAuto();
+    autoEnabled = true;
+    autoChk.checked = true;
+
+    closeViewer();
+    revokeAll();
+
+    items = [];
+    displayItems = [];
+    cards = [];
+    current = -1;
+    currentKey = null;
+    renderedCount = 0;
+    renderTarget = 0;
+    renderScheduled = false;
+    virtualDrawn.clear();
+    virtualActiveCard = null;
+    grid.classList.remove('virtual');
+    grid.innerHTML = '';
+    io.disconnect();
+
+    topbar.classList.remove('scanning');
+    status.classList.remove('done');
+    statusText.textContent = '';
+    stats.hidden = true;
+    summary.textContent = '';
+
+    searchInput.value = '';
+    sortSelect.value = 'name';
+
+    placeholder.hidden = false;
+    gallery.hidden = true;
+    chip.hidden = true;
+    pickBtn2.hidden = true;
+    forgetBtn.hidden = true;
+    clearCacheBtn.hidden = true;
+    restoreWarn.hidden = true;
+    restoreBtn.hidden = true;
+    warn.hidden = true;
+
+    pickBtn.disabled = false;
+    pickBtn.style.opacity = '';
+    setControlsEnabled(false);
+
+    showToast('Локальные данные очищены', 'success');
+  }
+
+  /* ── справка ── */
+  function openHelp() {
+    if (helpOpen) return;
+
+    helpOpen = true;
+    helpReturnFocus = document.activeElement;
+
+    if (isFullscreen() && helpOverlay.parentElement !== viewer) {
+      viewer.appendChild(helpOverlay);
+    } else if (!isFullscreen() && helpOverlay.parentElement !== document.body) {
+      document.body.appendChild(helpOverlay);
+    }
+
+    helpOverlay.hidden = false;
+    requestAnimationFrame(() => helpCloseBtn.focus());
+  }
+
+  function closeHelp() {
+    if (!helpOpen) return;
+
+    helpOpen = false;
+    helpOverlay.hidden = true;
+
+    if (!isFullscreen() && helpOverlay.parentElement !== document.body) {
+      document.body.appendChild(helpOverlay);
+    }
+
+    if (helpReturnFocus && helpReturnFocus.focus) helpReturnFocus.focus();
+    helpReturnFocus = null;
+  }
+
+  function toggleHelp() {
+    if (helpOpen) closeHelp();
+    else openHelp();
+  }
+
+  /* ── информация о файле ── */
+  function buildInfoHtml(it) {
+    const ci = it.colorInfo || {};
+
+    const typeLabel = {
+      png: 'PNG',
+      jpeg: 'JPEG',
+      webp: 'WebP',
+      avif: 'AVIF',
+      bmp: 'BMP'
+    }[it.type] || (it.type || 'unknown').toUpperCase();
+
+    const colorLabel = {
+      gray: 'серый',
+      rgb: 'RGB',
+      palette: 'палитра',
+      rgba: 'RGBA',
+      unknown: 'неизвестно'
+    }[ci.color] || ci.color || 'неизвестно';
+
+    const profileLabel = {
+      none: 'нет',
+      icc: 'ICC',
+      unknown: 'неизвестно'
+    }[ci.profile] || ci.profile || 'неизвестно';
+
+    const mp = it.w && it.h
+      ? (it.w * it.h / 1e6).toFixed(2).replace('.', ',') + ' Мп'
+      : '—';
+
+    const date = it.lastModified
+      ? new Date(it.lastModified).toLocaleString('ru-RU')
+      : '—';
+
+    const bitDepthRow = (ci.bitDepth !== null && ci.bitDepth !== undefined)
+      ? '<tr><td>Глубина цвета</td><td>' + escapeHtml(String(ci.bitDepth)) + ' бит</td></tr>'
+      : '';
+
+    const cmykNote = ci.cmyk
+      ? '<div class="note">Обнаружен возможный CMYK-цвет. Просмотр в браузере может отличаться от оригинала.</div>'
+      : '';
+
+    const brokenNote = it.broken
+      ? '<div class="note">Файл не удалось загрузить.</div>'
+      : '';
+
+    return '<table>' +
+      '<tbody>' +
+      '<tr><td>Имя</td><td>' + escapeHtml(it.name) + '</td></tr>' +
+      '<tr><td>Путь</td><td>' + (it.path ? escapeHtml(it.path) : '—') + '</td></tr>' +
+      '<tr><td>Тип</td><td>' + escapeHtml(typeLabel) + '</td></tr>' +
+      '<tr><td>Размер</td><td>' + escapeHtml(fmtSize(it.size)) + '</td></tr>' +
+      '<tr><td>Ширина</td><td>' + (it.w ? String(it.w) : '—') + '</td></tr>' +
+      '<tr><td>Высота</td><td>' + (it.h ? String(it.h) : '—') + '</td></tr>' +
+      '<tr><td>Мегапиксели</td><td>' + escapeHtml(mp) + '</td></tr>' +
+      '<tr><td>Дата изменения</td><td>' + escapeHtml(date) + '</td></tr>' +
+      '<tr><td>Цвет</td><td>' + escapeHtml(colorLabel) + '</td></tr>' +
+      '<tr><td>Профиль</td><td>' + escapeHtml(profileLabel) + '</td></tr>' +
+      bitDepthRow +
+      '<tr><td>Статус</td><td>' + (it.broken ? 'повреждено / не удалось загрузить' : 'ок') + '</td></tr>' +
+      '</tbody>' +
+      '</table>' +
+      cmykNote +
+      brokenNote;
+  }
+
+  function openInfo() {
+    if (infoOpen) return;
+    if (helpOpen) return;
+    if (viewer.hidden) return;
+    if (current < 0 || current >= displayItems.length) return;
+
+    const it = displayItems[current];
+    if (!it) return;
+
+    infoOpen = true;
+    infoReturnFocus = document.activeElement;
+
+    infoBody.innerHTML = buildInfoHtml(it);
+
+    if (isFullscreen() && infoOverlay.parentElement !== viewer) {
+      viewer.appendChild(infoOverlay);
+    } else if (!isFullscreen() && infoOverlay.parentElement !== document.body) {
+      document.body.appendChild(infoOverlay);
+    }
+
+    infoOverlay.hidden = false;
+    requestAnimationFrame(() => infoCloseBtn.focus());
+  }
+
+  function closeInfo() {
+    if (!infoOpen) return;
+
+    infoOpen = false;
+    infoOverlay.hidden = true;
+
+    if (!isFullscreen() && infoOverlay.parentElement !== document.body) {
+      document.body.appendChild(infoOverlay);
+    }
+
+    if (infoReturnFocus && infoReturnFocus.focus) {
+      infoReturnFocus.focus();
+    }
+    infoReturnFocus = null;
+  }
+
+  function trapFocus(container, e) {
+    const focusable = container.querySelectorAll(
+      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+    );
+
+    if (!focusable.length) return;
+
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+
+    if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  }
+
+  /* ── события ── */
+  prevBtn.addEventListener('click', () => step(-1));
+  nextBtn.addEventListener('click', () => step(1));
+  closeBtn.addEventListener('click', closeViewer);
+  fsBtn.addEventListener('click', toggleFullscreen);
+
+  searchInput.addEventListener('input', applySearchSort);
+  sortSelect.addEventListener('change', () => {
+    try {
+      localStorage.setItem(SORT_KEY, sortSelect.value);
+    } catch {}
+    applySearchSort();
+  });
+  refreshBtn.addEventListener('click', () => refreshFolder(false));
+  autoChk.addEventListener('change', () => setAutoEnabled(autoChk.checked));
+
+  restoreBtn.addEventListener('click', async () => {
+    restoreBtn.disabled = true;
+    await restoreSavedFolder();
+    restoreBtn.disabled = false;
+  });
+
+  pickBtn.addEventListener('click', pickFolder);
+  pickBtn2.addEventListener('click', pickFolder);
+  forgetBtn.addEventListener('click', forgetFolder);
+  clearCacheBtn.addEventListener('click', clearAppCache);
+
+  side.addEventListener('scroll', () => {
+    if (displayItems.length > VIRTUAL_THRESHOLD) {
+      if (!virtualScrollRaf) {
+        virtualScrollRaf = requestAnimationFrame(() => {
+          virtualScrollRaf = 0;
+          renderVirtualRange(false);
+        });
+      }
+    } else if (renderedCount < displayItems.length && isNearBottom()) {
+      renderTarget = Math.max(renderTarget, renderedCount + CONFIG.RENDER_CHUNK * 2);
+      scheduleRenderChunk();
+    }
+  }, { passive: true });
+
+  helpCloseBtn.addEventListener('click', closeHelp);
+  helpOverlay.addEventListener('click', e => {
+    if (e.target === helpOverlay) closeHelp();
+  });
+
+  infoCloseBtn.addEventListener('click', closeInfo);
+  infoOverlay.addEventListener('click', e => {
+    if (e.target === infoOverlay) closeInfo();
+  });
+
+  helpOverlay.addEventListener('keydown', e => {
+    if (e.key === 'Tab' && helpOpen) trapFocus(helpOverlay, e);
+  });
+
+  infoOverlay.addEventListener('keydown', e => {
+    if (e.key === 'Tab' && infoOpen) trapFocus(infoOverlay, e);
+  });
+
+  /* ── колесо мыши: зум ── */
+  viewer.addEventListener('wheel', e => {
+    if (viewer.hidden) return;
+    e.preventDefault();
+    showUI();
+
+    const factor = e.deltaY < 0 ? CONFIG.ZOOM_STEP : 1 / CONFIG.ZOOM_STEP;
+    zoomAtPoint(e.clientX, e.clientY, scale * factor, false);
+  }, { passive: false });
+
+  /* ── перетаскивание при зуме ── */
+  stage.addEventListener('pointerdown', e => {
+    if (viewer.hidden || scale <= 1.01 || e.button !== 0 || panning) return;
+
+    panning = true;
+    panPointerId = e.pointerId;
+    panStartX = e.clientX;
+    panStartY = e.clientY;
+    panStartTx = tx;
+    panStartTy = ty;
+
+    stage.classList.add('grabbing');
+    viewImg.classList.remove('anim');
+  });
+
+  window.addEventListener('pointermove', e => {
+    if (!panning || e.pointerId !== panPointerId) return;
+
+    tx = panStartTx + (e.clientX - panStartX);
+    ty = panStartTy + (e.clientY - panStartY);
+    applyTransform(false);
+  });
+
+  function endPan(e) {
+    if (!panning || e.pointerId !== panPointerId) return;
+    stopPan();
+  }
+
+  window.addEventListener('pointerup', endPan);
+  window.addEventListener('pointercancel', endPan);
+
+  /* ── двойной клик: сброс / зум к точке ── */
+  stage.addEventListener('dblclick', e => {
+    if (viewer.hidden) return;
+    showUI();
+
+    if (scale > 1.01) {
+      resetZoom(true);
+    } else if (e.target === viewImg) {
+      zoomAtPoint(e.clientX, e.clientY, 2.5, true);
+    }
+  });
+
+  /* ── клавиатура ── */
+  document.addEventListener('keydown', e => {
+    const tag = (e.target && e.target.tagName) || '';
+    const inField = tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA';
+
+    // Если открыта информация, блокируем остальные горячие клавиши.
+    if (infoOpen) {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        closeInfo();
+      }
+      return;
+    }
+
+    // F1 работает всегда, даже когда фокус в поиске.
+    if (e.key === 'F1' || e.code === 'F1') {
+      e.preventDefault();
+      toggleHelp();
+      return;
+    }
+
+    // Если открыта справка, не даём горячим клавишим приложения работать.
+    if (helpOpen) {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        closeHelp();
+      }
+      return;
+    }
+
+    // Если фокус в поле поиска/сортировки, не перехватываем клавиши.
+    if (inField) {
+      if (e.key === 'Escape') e.target.blur();
+      return;
+    }
+
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+
+    const key = e.key;
+
+    if (e.repeat && (key === 'f' || key === 'F' || e.code === 'KeyF')) return;
+
+    if (e.key === 'Escape') {
+      if (isFullscreen()) {
+        exitFullscreen();
+      } else if (!viewer.hidden) {
+        closeViewer();
+      }
+      return;
+    }
+
+    if (viewer.hidden) {
+      if ((key === 'f' || key === 'F' || e.code === 'KeyF') && items.length) {
+        e.preventDefault();
+
+        if (!displayItems.length) {
+          searchInput.value = '';
+          applySearchSort();
+        }
+
+        if (displayItems.length) {
+          openViewer(0);
+          requestFullscreen();
+        }
+      } else if ((key === 'r' || key === 'R') && dirHandle) {
+        e.preventDefault();
+        refreshFolder(false);
+      }
+
+      return;
+    }
+
+    if (key === 'ArrowRight') {
+      e.preventDefault();
+      step(1);
+    } else if (key === 'ArrowLeft') {
+      e.preventDefault();
+      step(-1);
+    } else if (key === 'i' || key === 'I' || e.code === 'KeyI') {
+      e.preventDefault();
+      openInfo();
+    } else if (key === 'f' || key === 'F' || e.code === 'KeyF') {
+      e.preventDefault();
+      toggleFullscreen();
+    } else if (key === 'r' || key === 'R') {
+      e.preventDefault();
+      refreshFolder(false);
+    } else if (key === '+' || key === '=' || e.code === 'NumpadAdd') {
+      e.preventDefault();
+      zoomCenter(1.25, true);
+    } else if (key === '-' || key === '_' || e.code === 'NumpadSubtract') {
+      e.preventDefault();
+      zoomCenter(1 / 1.25, true);
+    } else if (key === '0' || e.code === 'Numpad0') {
+      e.preventDefault();
+      resetZoom(true);
+    }
+
+    if (isFullscreen()) showUI();
+  });
+
+  viewer.addEventListener('mousemove', showUI);
+
+  document.addEventListener('fullscreenchange', () => {
+    const fs = isFullscreen();
+
+    fsBtn.textContent = fs ? '⤢' : '⛶';
+    fsBtn.title = fs ? 'Выйти из полного экрана (F)' : 'Полный экран (F)';
+
+    if (fs) {
+      showUI();
+
+      if (helpOpen && helpOverlay.parentElement !== viewer) {
+        viewer.appendChild(helpOverlay);
+      }
+
+      if (infoOpen && infoOverlay.parentElement !== viewer) {
+        viewer.appendChild(infoOverlay);
+      }
+
+      requestAnimationFrame(() => {
+        measureStage();
+        fitImage();
+        applyTransform(false);
+      });
+    } else {
+      viewer.classList.remove('ui-hidden');
+      clearTimeout(uiTimer);
+      resetZoom(false);
+
+      if (helpOverlay.parentElement === viewer) {
+        document.body.appendChild(helpOverlay);
+      }
+
+      if (infoOverlay.parentElement === viewer) {
+        document.body.appendChild(infoOverlay);
+      }
+
+      requestAnimationFrame(() => {
+        measureStage();
+        fitImage();
+        applyTransform(false);
+      });
+    }
+  });
+
+  let stageResizeRaf = 0;
+  function onStageResize() {
+    if (viewer.hidden) return;
+    cancelAnimationFrame(stageResizeRaf);
+    stageResizeRaf = requestAnimationFrame(() => {
+      measureStage();
+      fitImage();
+      applyTransform(false);
+    });
+  }
+
+  if ('ResizeObserver' in window) {
+    new ResizeObserver(onStageResize).observe(stage);
+  }
+  window.addEventListener('resize', onStageResize);
+
+  window.addEventListener('resize', () => {
+    if (!gallery.hidden && displayItems.length > VIRTUAL_THRESHOLD && grid.classList.contains('virtual')) {
+      cancelAnimationFrame(virtualResizeRaf);
+      virtualResizeRaf = requestAnimationFrame(() => {
+        renderVirtual();
+      });
+    }
+  });
+
+  async function init() {
+    setControlsEnabled(false);
+
+    if (!window.isSecureContext) {
+      warn.hidden = false;
+      warn.textContent = 'Браузер не поддерживает File System Access API в этом контексте. Откройте приложение в поддерживаемом браузере и защищённом контексте.';
+      restoreWarn.hidden = true;
+      restoreBtn.hidden = true;
+      pickBtn.disabled = true;
+      pickBtn.style.opacity = .5;
+      return;
+    }
+
+    if (!supported) {
+      warn.hidden = false;
+      warn.textContent = 'Ваш браузер не поддерживает выбор папки (File System Access API). Откройте этот файл в Chrome — он работает только там.';
+      restoreWarn.hidden = true;
+      restoreBtn.hidden = true;
+      pickBtn.disabled = true;
+      pickBtn.style.opacity = .5;
+      return;
+    }
+
+    pickBtn.disabled = false;
+    pickBtn.style.opacity = '';
+
+    await restoreSavedFolder();
+  }
+
+  init();
+})();
+</script>
+</body>
+</html>
